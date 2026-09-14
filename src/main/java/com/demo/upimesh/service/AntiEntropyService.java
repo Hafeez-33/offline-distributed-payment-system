@@ -29,6 +29,13 @@ public class AntiEntropyService {
     public static final int DEFAULT_MAX_BATCH_SIZE = 50;
     public static final String PROTOCOL_VERSION = "v2_sync";
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.demo.upimesh.fault.FaultInterceptor faultInterceptor;
+
+    public void setFaultInterceptor(com.demo.upimesh.fault.FaultInterceptor faultInterceptor) {
+        this.faultInterceptor = faultInterceptor;
+    }
+
     public record PairwiseSyncResult(
             String localNodeId,
             String remoteNodeId,
@@ -76,6 +83,12 @@ public class AntiEntropyService {
         // 1. Exchange STATE_SUMMARY
         StateSummaryMessage summaryLocal = generateSummary(local);
         StateSummaryMessage summaryRemote = generateSummary(remote);
+
+        if (faultInterceptor != null && (!faultInterceptor.allowSyncMessage(local.getDeviceId(), remote.getDeviceId(), summaryLocal)
+                || !faultInterceptor.allowSyncMessage(remote.getDeviceId(), local.getDeviceId(), summaryRemote))) {
+            log.warn("Sync summary exchange dropped by fault rule between {} and {}", local.getDeviceId(), remote.getDeviceId());
+            return PairwiseSyncResult.inSync(local.getDeviceId(), remote.getDeviceId());
+        }
 
         PeerSyncRecord localPeerRecord = local.getPeerRecord(remote.getDeviceId());
         PeerSyncRecord remotePeerRecord = remote.getPeerRecord(local.getDeviceId());
@@ -239,7 +252,8 @@ public class AntiEntropyService {
                 .findFirst()
                 .orElse(null);
 
-        if (primary != null && reachabilityCheck.test(local.getDeviceId(), primary.getDeviceId())) {
+        boolean primaryAvailable = faultInterceptor == null || faultInterceptor.isPeerAvailable(local.getDeviceId(), primaryTargetId);
+        if (primary != null && primaryAvailable && reachabilityCheck.test(local.getDeviceId(), primary.getDeviceId())) {
             try {
                 return syncPair(local, primary);
             } catch (Exception e) {
@@ -248,7 +262,7 @@ public class AntiEntropyService {
             }
         } else {
             local.getPeerRecord(primaryTargetId).recordFailure();
-            log.warn("Primary target {} unreachable. Attempting alternate peer...", primaryTargetId);
+            log.warn("Primary target {} unreachable or unavailable. Attempting alternate peer...", primaryTargetId);
         }
 
         // Alternate peer selection: find first reachable non-self peer that isn't the failed primary
@@ -256,7 +270,8 @@ public class AntiEntropyService {
             if (alt.getDeviceId().equals(local.getDeviceId()) || alt.getDeviceId().equals(primaryTargetId)) {
                 continue;
             }
-            if (reachabilityCheck.test(local.getDeviceId(), alt.getDeviceId())) {
+            boolean altAvailable = faultInterceptor == null || faultInterceptor.isPeerAvailable(local.getDeviceId(), alt.getDeviceId());
+            if (altAvailable && reachabilityCheck.test(local.getDeviceId(), alt.getDeviceId())) {
                 log.info("Selected alternate peer {} for node {}", alt.getDeviceId(), local.getDeviceId());
                 return syncPair(local, alt);
             }

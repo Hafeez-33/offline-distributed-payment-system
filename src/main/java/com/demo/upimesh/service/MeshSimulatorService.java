@@ -30,6 +30,9 @@ public class MeshSimulatorService {
     @Autowired
     private AntiEntropyService antiEntropyService;
 
+    @Autowired(required = false)
+    private com.demo.upimesh.fault.FaultInterceptor faultInterceptor;
+
     public MeshSimulatorService() {
         seedDefaultDevices();
     }
@@ -37,6 +40,16 @@ public class MeshSimulatorService {
     public MeshSimulatorService(AntiEntropyService antiEntropyService) {
         this.antiEntropyService = antiEntropyService;
         seedDefaultDevices();
+    }
+
+    public MeshSimulatorService(AntiEntropyService antiEntropyService, com.demo.upimesh.fault.FaultInterceptor faultInterceptor) {
+        this.antiEntropyService = antiEntropyService;
+        this.faultInterceptor = faultInterceptor;
+        seedDefaultDevices();
+    }
+
+    public void setFaultInterceptor(com.demo.upimesh.fault.FaultInterceptor faultInterceptor) {
+        this.faultInterceptor = faultInterceptor;
     }
 
     private void seedDefaultDevices() {
@@ -92,6 +105,9 @@ public class MeshSimulatorService {
     public boolean isReachable(String a, String b) {
         if (a == null || b == null) return false;
         if (a.equals(b)) return true;
+        if (faultInterceptor != null && (!faultInterceptor.isPeerAvailable(a, b) || !faultInterceptor.isPeerAvailable(b, a))) {
+            return false;
+        }
         return !severedLinks.contains(linkKey(a, b));
     }
 
@@ -133,15 +149,22 @@ public class MeshSimulatorService {
                     if (dst == src) continue;
                     if (!isReachable(src.getDeviceId(), dst.getDeviceId())) continue; // partition check
                     if (dst.holds(pkt.getPacketHash())) continue; // dedup by authoritative hash
+                    if (faultInterceptor != null && !faultInterceptor.allowGossipPush(src.getDeviceId(), dst.getDeviceId(), pkt)) {
+                        continue; // Dropped or delayed by fault rule
+                    }
 
-                    MeshPacket copy = new MeshPacket();
-                    copy.setPacketId(pkt.getPacketId());
-                    copy.setTtl(pkt.getTtl() - 1);
-                    copy.setCreatedAt(pkt.getCreatedAt());
-                    copy.setCiphertext(pkt.getCiphertext());
+                    int dups = faultInterceptor != null ? faultInterceptor.getGossipDuplicateCount(src.getDeviceId(), dst.getDeviceId(), pkt) : 1;
+                    for (int k = 0; k < dups; k++) {
+                        MeshPacket copy = new MeshPacket();
+                        copy.setPacketId(pkt.getPacketId());
+                        copy.setTtl(pkt.getTtl() - 1);
+                        copy.setCreatedAt(pkt.getCreatedAt());
+                        copy.setCiphertext(pkt.getCiphertext());
 
-                    if (dst.hold(copy)) {
-                        transfers++;
+                        MeshPacket payload = faultInterceptor != null ? faultInterceptor.interceptPacketPayload(src.getDeviceId(), dst.getDeviceId(), copy) : copy;
+                        if (dst.hold(payload)) {
+                            transfers++;
+                        }
                     }
                 }
             }
@@ -240,6 +263,10 @@ public class MeshSimulatorService {
         for (VirtualDevice d : devices.values()) {
             if (!d.hasInternet()) continue;
             for (MeshPacket pkt : d.getHeldPackets()) {
+                if (faultInterceptor != null && !faultInterceptor.allowBridgeUpload(d.getDeviceId(), pkt)) {
+                    log.warn("Bridge upload suppressed by fault rule for node {}", d.getDeviceId());
+                    continue; // Bridge transport failure; packet remains in mesh buffer intact
+                }
                 out.add(new BridgeUpload(d.getDeviceId(), pkt));
             }
         }

@@ -785,71 +785,88 @@ Total Project Test Suite: 71 tests run, 0 failures, 0 errors.
 
 ---
 
-# PHASE 5 — Fault Injection & Distributed Testing
+# PHASE 5 — Fault Injection & Distributed Reliability Testing
 
 ## Objective
 
-Prove the system behaves correctly under failure.
+Validate whether Phases 1–4 continue to preserve their security, idempotency, sequence, and financial conservation invariants under adverse distributed-system conditions using a deterministic, rule-based fault-injection framework.
 
-### Faults
+### 1. Financial Safety Boundary
+Fault injection operates **strictly at transport, control, and exception boundaries**. The fault-injection engine **never directly mutates** account balances, transaction amounts, escrow balances, wallet counters, or database records. All ledger mutations proceed solely through standard domain services (`SettlementService`, `OfflineWalletService`).
 
-Simulate:
+### 2. Supported Fault Types (`FaultType`)
+The layer supports 13 discrete deterministic fault types:
+- **`DROP`**: Discards packets or sync messages silently during transit.
+- **`DUPLICATE`**: Injects duplicate delivery of the identical packet $N$ times.
+- **`DELAY`**: Withholds packets from initial gossip push for delayed delivery.
+- **`REORDER`**: Inverts transmission order (e.g. delivers counter 2 before counter 1) to verify existing Phase 3 `PENDING_SEQUENCE_GAP` handling without altering settlement logic.
+- **`PARTITION`**: Severs communication links between submeshes or nodes.
+- **`PEER_UNAVAILABLE`**: Simulates peer unavailability during anti-entropy to verify `syncWithFallback`.
+- **`BRIDGE_UNAVAILABLE`**: Simulates mesh-to-bridge transport/upload failure while keeping packets in mesh buffers completely intact.
+- **`MALFORMED_SYNC_MESSAGE`**: Injects invalid schema/control sync messages.
+- **`CORRUPTED_PACKET_PAYLOAD`**: Corrupts ciphertext bytes to verify decryption/integrity rejection.
+- **`TRANSIENT_DATABASE_FAILURE`**: Injects transient exceptions (`OptimisticLockException`) to test retry backoff.
+- **`STALE_RESPONSE`**: Drops post-commit HTTP responses to verify fast-path recovery without double debiting.
+- **`DUPLICATE_REQUEST`**: Simultaneous concurrent ingress of identical packet hashes.
+- **`CRASH_AND_RESTART`**: Volatile node buffer wipe (`clear()`) followed by full anti-entropy reconstruction.
 
-```text
-Packet loss
-Packet duplication
-Packet delay
-Network partition
-Node crash
-Bridge failure
-Concurrent transactions
-Replay attack
-Tampered packet
-Out-of-order delivery
-```
+### 3. Architecture & Narrow Interception
+- **`FaultRule`**: Immutable record defining target criteria, occurrence limits, and message classes.
+- **`FaultInjector`**: Central deterministic engine maintaining mutable atomic activation counters, rule matching, and metrics recording. Zero overhead and transparent passthrough when disabled.
+- **`FaultInterceptor`**: Narrow adapter interface wired into `MeshSimulatorService`, `AntiEntropyService`, `SettlementService`, and `BridgeIngestionService`.
+- **`ReliabilityMetrics`**: Thread-safe in-memory counters tracking injections, drops, duplicates, retries, and invariant checks.
 
-### Example
+### 4. Machine-Checkable Invariants (I1–I12)
+- **I1 (Packet Identity)**: $\text{packetHash} \equiv \text{SHA-256}(\text{ciphertext})$.
+- **I2 (Transport Deduplication)**: Device stores at most 1 copy of any packet hash.
+- **I3 (Settlement Idempotency)**: At most 1 committed settlement per packet hash.
+- **I4 (Funds Conservation)**: $\sum \text{liquidBalance} + \sum \text{offlineLockedBalance} \equiv \text{InitialTotalSystemFunds}$.
+- **I5 (Non-Negative Escrow)**: Offline wallet remaining escrow $\ge 0$.
+- **I6 (Observable Conflict)**: Conflicting counter collisions permanently recorded as `CONFLICTING` and wallet frozen as `LOCKED_DISPUTED`.
+- **I7 (Connected Component Convergence)**: Reachable nodes achieve identical `stateDigest` after anti-entropy.
+- **I8 (TTL Independence)**: Anti-entropy repairs missing packets regardless of TTL expiration.
+- **I9 (Transient Recoverability)**: Transient DB failures release in-flight locks to allow retries.
+- **I10 (Permanent Terminality)**: Validation failures terminate without retry loops.
+- **I11 (Crash Non-Mutation)**: Node crash/restart does not modify backend ledger.
+- **I12 (Cryptographic Barrier)**: Invalid/corrupted signatures are unconditionally rejected.
 
-```text
-Network:
+### 5. Automated Tests & Results
+Implemented in `DistributedReliabilityTest.java` (25 tests):
+- **Group 1: Isolated Network Faults (7 tests)**:
+  1. `testPacketDropRecoveredBySubsequentAntiEntropy` — PASS
+  2. `testPacketDuplicationSuppressedByAuthoritativeHash` — PASS
+  3. `testReorderedPacketDeliveryObservedAsSequenceGap` — PASS
+  4. `testDelayedPacketArrivalAfterAntiEntropyIsDroppedAsDuplicate` — PASS
+  5. `testPeerUnavailableTriggersAlternatePeerFallback` — PASS
+  6. `testNodeRestartRecoversBufferWithoutCorruptingBackend` — PASS
+  7. `testRepeatedPartitionHealCyclesAchieveEventualConvergence` — PASS
+- **Group 2: Isolated Bridge & Backend Faults (6 tests)**:
+  8. `testBridgeUnavailableKeepsMeshBuffersIntact` — PASS
+  9. `testDuplicateBridgeUploadIdempotentlyDeduplicated` — PASS
+  10. `testLostHttpResponseRecoversCommittedSettlement` — PASS
+  11. `testTransientOptimisticLockExceptionSucceedsOnRetry` — PASS
+  12. `testExhaustedRetriesThrowsTransientExceptionAndReleasesLock` — PASS
+  13. `testPermanentValidationFailureNeverRetried` — PASS
+- **Group 3: Compound & Combination Faults (7 tests)**:
+  14. `testCompoundDropAndAntiEntropy` — PASS
+  15. `testCompoundDelayAndReorderOfflineWalletSequence` — PASS
+  16. `testCompoundDuplicateAndLostResponse` — PASS
+  17. `testCompoundPartitionAndConcurrentPayments` — PASS
+  18. `testCompoundPartitionAndBridgeUnavailable` — PASS
+  19. `testCompoundNodeRestartAndAntiEntropy` — PASS
+  20. `testCompoundDuplicateRequestAndOptimisticLockContention` — PASS
+- **Group 4: Invariant & Property Tests (5 tests)**:
+  21. `testPropertyConservationOfTotalFunds` — PASS
+  22. `testPropertyCommutativeStateDigest` — PASS
+  23. `testPropertyOfflineEscrowCannotBecomeNegative` — PASS
+  24. `testPropertyConflictingCounterAlwaysObservable` — PASS
+  25. `testPropertyZeroInvariantViolationsUnderAdverseConditions` — PASS
 
-A ─── B ─── C
-
-Partition:
-
-A       X       B ─── C
-```
-
-Then reconnect and verify convergence.
-
-### Dashboard controls
-
-Eventually:
-
-```text
-Packet Loss:       20%
-Packet Delay:      500ms
-Duplicate Rate:    10%
-Node Failures:     2
-
-[ RUN EXPERIMENT ]
-```
-
-### Metrics
-
-Measure:
-
-* Settlement success
-* Settlement latency
-* Duplicate rejection
-* Conflict detection
-* Recovery time
-* Gossip convergence
-* Packet delivery rate
+**Total Project Test Suite**: **96 tests run, 0 failures, 0 errors, 0 skipped.**
 
 ### Status
 
-**NOT STARTED**
+**COMPLETED**
 
 ---
 

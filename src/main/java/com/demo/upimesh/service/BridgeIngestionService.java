@@ -54,6 +54,11 @@ public class BridgeIngestionService {
     @Autowired private SettlementService settlement;
     @Autowired private com.demo.upimesh.model.OfflineWalletRepository walletRepository;
     @Autowired private com.demo.upimesh.crypto.ServerKeyHolder serverKeyHolder;
+    @Autowired(required = false) private com.demo.upimesh.fault.FaultInterceptor faultInterceptor;
+
+    public void setFaultInterceptor(com.demo.upimesh.fault.FaultInterceptor faultInterceptor) {
+        this.faultInterceptor = faultInterceptor;
+    }
 
     @Value("${upi.mesh.packet-max-age-seconds:86400}")
     private long maxAgeSeconds;
@@ -253,6 +258,12 @@ public class BridgeIngestionService {
 
             // Transaction committed to DB
             idempotency.markCompleted(packetHash);
+
+            if (faultInterceptor != null && !faultInterceptor.allowPostCommitResponse(packetHash)) {
+                log.warn("Post-commit response dropped by fault rule for packet {}", packetHash);
+                throw new IllegalStateException("Simulated lost HTTP response after database commit");
+            }
+
             if (tx.getStatus() == Transaction.Status.SETTLED) {
                 return IngestResult.settled(packetHash, tx);
             } else if (tx.getStatus() == Transaction.Status.PENDING_SEQUENCE_GAP) {
@@ -264,7 +275,10 @@ public class BridgeIngestionService {
             }
 
         } catch (Exception e) {
-            if (packetHash != null) {
+            if (e instanceof IllegalStateException && e.getMessage() != null && e.getMessage().contains("Simulated lost HTTP response")) {
+                throw (IllegalStateException) e;
+            }
+            if (packetHash != null && transactions.findByPacketHash(packetHash).isEmpty()) {
                 idempotency.release(packetHash);
             }
             log.error("Ingestion error: {}", e.getMessage(), e);

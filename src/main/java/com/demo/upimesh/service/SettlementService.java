@@ -46,6 +46,20 @@ public class SettlementService {
     @org.springframework.beans.factory.annotation.Value("${upi.mesh.sequence-gap-window-seconds:1800}")
     private long gapWindowSeconds;
 
+    @org.springframework.beans.factory.annotation.Value("${upi.mesh.settlement-backoff-ms:25}")
+    private long baseBackoffMs = 25L;
+
+    @Autowired(required = false)
+    private com.demo.upimesh.fault.FaultInterceptor faultInterceptor;
+
+    public void setFaultInterceptor(com.demo.upimesh.fault.FaultInterceptor faultInterceptor) {
+        this.faultInterceptor = faultInterceptor;
+    }
+
+    public void setBaseBackoffMs(long baseBackoffMs) {
+        this.baseBackoffMs = baseBackoffMs;
+    }
+
     /**
      * Settle payment with bounded optimistic-lock retry.
      */
@@ -55,6 +69,9 @@ public class SettlementService {
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
+                if (faultInterceptor != null) {
+                    faultInterceptor.inspectSettlementAttempt(packetHash, attempt);
+                }
                 return executeInNewTransaction(instruction, packetHash, bridgeNodeId, hopCount);
             } catch (Exception e) {
                 if (!isRetryable(e)) {
@@ -473,9 +490,8 @@ public class SettlementService {
 
     private void applyBackoff(int attempt) {
         try {
-            // attempt 1 -> ~25ms + [0,10]ms jitter; attempt 2 -> ~50ms + [0,15]ms jitter
-            long baseMs = attempt * 25L;
-            long jitter = ThreadLocalRandom.current().nextLong(5L * attempt);
+            long baseMs = attempt * baseBackoffMs;
+            long jitter = baseBackoffMs > 5 ? ThreadLocalRandom.current().nextLong(5L * attempt) : 0;
             Thread.sleep(baseMs + jitter);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

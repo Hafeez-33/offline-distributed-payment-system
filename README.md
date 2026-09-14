@@ -74,7 +74,14 @@ You'll get a dark dashboard with everything you need to drive the demo.
 mvnw.cmd test
 ```
 
-The interesting one is `IdempotencyConcurrencyTest` — it fires three threads delivering the same packet simultaneously and asserts that exactly one settles.
+Runs the complete 96-test automated verification suite across all 7 test classes:
+- **`SignatureServiceTest`** (10 tests): Ed25519 canonicalization, signing, and verification.
+- **`CryptographicIdentityTest`** (10 tests): Sender cryptographic authorization & replay prevention.
+- **`IdempotencyConcurrencyTest`** (3 tests): 3-bridges concurrent delivery & tamper detection.
+- **`ReliableIdempotencyTest`** (13 tests): Optimistic-lock retry, lost-response recovery, and transient failure handling.
+- **`OfflineWalletReliabilityTest`** (20 tests): Escrow allocation, sequence gap state machine, fork detection, and receipt validation.
+- **`AdvancedGossipSyncTest`** (15 tests): Pairwise anti-entropy, state digests, 16-bucket slicing, and partition healing.
+- **`DistributedReliabilityTest`** (25 tests): Phase 5 deterministic fault injection across network, bridge, compound, and property scenarios.
 
 ---
 
@@ -352,6 +359,45 @@ Conflicting offline wallet transactions (e.g. same wallet ID and counter with di
 
 ---
 
+### Problem 6: Fault Injection & Distributed Reliability Testing (Phase 5)
+
+Distributed mesh systems and deferred settlement architectures face adverse network conditions, partitions, lost responses, and transient database conflicts. Phase 5 provides an in-memory, deterministic fault-injection and reliability-testing framework to validate that Phases 1–4 preserve all cryptographic, idempotency, sequence, and funds conservation invariants under failure.
+
+#### 1. Financial Safety Boundary
+Fault injection operates **strictly at transport, control, and exception boundaries**. The injector **never directly mutates** balances, escrow amounts, wallet counters, or database entities. All state transitions occur through standard domain pipelines.
+
+#### 2. Supported Fault Types (`FaultType`)
+The engine supports 13 deterministic fault types:
+- `DROP`: Silently drops packets or sync messages in transit.
+- `DUPLICATE`: Duplicates packets $N$ times over mesh links.
+- `DELAY`: Withholds packets from push gossip for delayed delivery.
+- `REORDER`: Inverts transmission order to verify existing Phase 3 `PENDING_SEQUENCE_GAP` handling.
+- `PARTITION`: Severs links between submeshes or nodes.
+- `PEER_UNAVAILABLE`: Simulates unreachable peer to test fallback alternate selection.
+- `BRIDGE_UNAVAILABLE`: Simulates mesh-to-bridge transport failure while keeping mesh buffers intact.
+- `MALFORMED_SYNC_MESSAGE`: Injects invalid schema/control sync messages.
+- `CORRUPTED_PACKET_PAYLOAD`: Injects corrupted ciphertext bytes to verify decryption rejection.
+- `TRANSIENT_DATABASE_FAILURE`: Injects `OptimisticLockException` to verify exponential backoff retries.
+- `STALE_RESPONSE`: Drops post-commit HTTP responses to verify fast-path recovery without double debits.
+- `DUPLICATE_REQUEST`: Concurrent submission of identical packet hashes.
+- `CRASH_AND_RESTART`: Resets volatile in-memory node buffers (`clear()`) followed by full anti-entropy recovery.
+
+#### 3. Machine-Checkable Invariants (I1–I12)
+1. **I1 (Packet Identity)**: `packetHash == SHA-256(ciphertext)`.
+2. **I2 (Transport Deduplication)**: At most 1 entry per packet hash in node buffer.
+3. **I3 (Settlement Idempotency)**: At most 1 committed settlement per packet hash.
+4. **I4 (Funds Conservation)**: $\sum \text{liquidBalance} + \sum \text{offlineLockedBalance} \equiv \text{InitialTotalFunds}$.
+5. **I5 (Non-Negative Escrow)**: Offline wallet remaining escrow $\ge 0$.
+6. **I6 (Observable Conflict)**: Conflicting counter collisions recorded as `CONFLICTING` and wallet frozen as `LOCKED_DISPUTED`.
+7. **I7 (Connected Component Convergence)**: Connected devices achieve identical `stateDigest` after anti-entropy.
+8. **I8 (TTL Independence)**: Anti-entropy repairs missing packets regardless of TTL expiration.
+9. **I9 (Transient Recoverability)**: Transient DB errors release in-flight locks to allow retries.
+10. **I10 (Permanent Terminality)**: Validation failures terminate without retry loops.
+11. **I11 (Crash Non-Mutation)**: Node crash/restart does not alter backend ledger.
+12. **I12 (Cryptographic Barrier)**: Unauthenticated or corrupted packets are unconditionally rejected.
+
+---
+
 ## File-by-file walkthrough
 
 ```
@@ -388,6 +434,13 @@ upi-offline-mesh/
         │       ├── PacketSyncMeta.java      Stored packet synchronization metadata record
         │       └── PeerSyncRecord.java      Neighbor synchronization tracking class
         │
+        ├── fault/                           ── Phase 5 Fault Injection & Reliability layer
+        │   ├── FaultType.java               Enum of all 13 supported network, control, and persistence fault types
+        │   ├── FaultRule.java               Immutable rule defining target criteria, occurrence limits, and message classes
+        │   ├── FaultInterceptor.java        Narrow adapter interface for transport, sync, and settlement interception
+        │   ├── FaultInjector.java           Central engine managing active rules, atomic counters, and zero-overhead passthrough
+        │   └── ReliabilityMetrics.java      In-memory atomic metrics tracking fault events and invariant checks
+        │
         ├── crypto/                          ── Cryptography layer
         │   ├── ServerKeyHolder.java         Generates RSA-2048 and Ed25519 issuer keypairs on startup
         │   ├── HybridCryptoService.java     RSA-OAEP + AES-256-GCM encrypt/decrypt + ciphertext hash
@@ -412,13 +465,14 @@ upi-offline-mesh/
             └── AppConfig.java               @EnableScheduling for cache eviction
 
 src/test/java/com/demo/upimesh/
-├── CryptographicIdentityTest.java           Sender identity & authorization verification integration tests
-├── IdempotencyConcurrencyTest.java          The 3-bridges-at-once test + tamper test
+├── CryptographicIdentityTest.java           Sender identity & authorization verification integration tests (10 tests)
+├── IdempotencyConcurrencyTest.java          The 3-bridges-at-once test + tamper test (3 tests)
 ├── ReliableIdempotencyTest.java             13 Phase 2 reliability, retry, lost-response, and concurrency tests
 ├── OfflineWalletReliabilityTest.java        20 Phase 3 offline escrow, sequence gaps, fork detection & receipt tests
 ├── AdvancedGossipSyncTest.java              15 Phase 4 anti-entropy, state digest, partition & convergence tests
+├── DistributedReliabilityTest.java          25 Phase 5 deterministic network, bridge, compound, and property fault tests
 └── crypto/
-    └── SignatureServiceTest.java            Ed25519 unit tests & canonicalization determinism tests
+    └── SignatureServiceTest.java            Ed25519 unit tests & canonicalization determinism tests (10 tests)
 ```
 
 ---
