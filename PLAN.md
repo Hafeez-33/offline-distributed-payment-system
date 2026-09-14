@@ -632,56 +632,70 @@ before either transaction reaches the server.
 
 Different transaction IDs do not solve this.
 
-### Research/design options
+### Implemented Architecture & Non-Negotiable Security Model
 
-Evaluate:
+1. **Non-Negotiable Security Guarantees**:
+   - **No absolute prevention claim**: We explicitly do NOT claim "Offline double spending is completely prevented."
+   - **Bounded Exposure**: The server-authorized offline allocation strictly bounds the issuer's authorized offline exposure.
+   - **Identical replay**: Prevented by Phase 2 authoritative packet hashing and database unique constraint.
+   - **Fork Detection**: Conflicting offline spends using duplicate sequence counters are detected during reconciliation.
+   - **Audit and Freezing**: Conflicting wallet histories are immediately frozen in `LOCKED_DISPUTED` state with auditable records.
+   - **Hardware Boundary**: Software-only devices cannot provide absolute physical anti-cloning guarantees; production rollback resistance requires hardware-backed keys and monotonic state (e.g. Android StrongBox / eSE).
 
-1. Offline spending limits
-2. Pre-funded offline wallets
-3. Cryptographically signed spending tokens
-4. Monotonic sequence counters
-5. Wallet certificates
-6. Hardware-backed keys
-7. Double-spend detection during reconciliation
-8. Risk-based transaction limits
+2. **Escrow Accounting**:
+   - Invariant: `Account total funds = liquid available balance + offline locked balance`.
+   - Allocation: ₹X debited from liquid balance, credited to `offlineLockedBalance`, `OfflineWallet` created with signed `OfflineWalletCertificate`.
+   - Settlement: Deducted from sender's `offlineLockedBalance` and credited to recipient's liquid balance. Sender's online liquid balance is never debited twice.
+   - Reconciliation/Expiry: Unused escrow (`allocatedAmount - settledAmount`) is returned to the sender's liquid balance.
 
-### Important
+3. **Server-Signed Offline Wallet Certificate**:
+   - `OfflineWalletCertificate` record includes `walletId`, `ownerVpa`, `ownerPublicKey`, `allocatedAmount`, `walletEpoch`, `validFrom`, `validUntil`, `initialCounter`, and `issuerSignature`.
+   - Deterministic canonical bytes signed by server's Ed25519 issuer key.
+   - Cryptographically verified on backend: signature, validity window, wallet owner, key binding, epoch, status, and allocation limit.
 
-We must explicitly document what guarantee the prototype provides.
+4. **Sequence State Machine & Fork Detection**:
+   - `counter == lastSettledCounter + 1`: In-order settlement with automatic cascading of staged sequence gaps.
+   - `counter > lastSettledCounter + 1`: Staged in `PENDING_SEQUENCE_GAP` status up to configurable gap window (default 30 min). If window expires without missing counter, marked `REJECTED_UNRESOLVED_SEQUENCE_GAP` and wallet marked `AUDIT_REQUIRED`.
+   - `counter <= lastSettledCounter`: If packet hash matches, Phase 2 duplicate recovery returns committed record; if packet hash differs, flags `CONFLICTING` (`double_spend_counter_collision`), marks wallet `LOCKED_DISPUTED`, and links conflicting transaction to winning transaction.
+   - Authoritative Winner Policy: "Among conflicting transactions that reach the authoritative backend, the first valid transaction to commit is the settlement winner."
 
-We must NOT falsely claim:
+5. **Epoch Semantics & Terminal Transfer Policy**:
+   - Strictly increasing wallet epochs ($E_1, E_2, \dots$); at most one ACTIVE epoch per wallet.
+   - Obsolete epoch transactions are rejected with `obsolete_wallet_epoch`.
+   - Terminal Transfer Policy: Payer $\to$ Payee $\to$ Backend. Payee cannot re-spend offline wallet funds.
 
-> "Offline payments completely prevent double spending."
+6. **Signed Settlement Receipt**:
+   - Backend generates a deterministic `SettlementReceipt` (`transactionId`, `packetHash`, `counter`, `status`, `settledAt`) signed with server's Ed25519 issuer key.
 
-Instead, define a precise security/consistency model.
+### Tests and Results
 
-### Target architecture
+Automated test suite implemented in `OfflineWalletReliabilityTest.java` (20 test cases):
+1. `validOfflineAllocationEscrowsFunds` — PASS
+2. `spendingWithinAllocationSucceeds` — PASS
+3. `outOfOrderCounterArrivalTriggersSequenceGap` — PASS
+4. `missingCounterGapEventuallyResolved` — PASS
+5. `gapTimeoutRejectsPendingTransaction` — PASS
+6. `oldEpochCertificateIsRejected` — PASS
+7. `expiredCertificateIsRejected` — PASS
+8. `unusedEscrowReturnedOnReconciliation` — PASS
+9. `escrowCorrectlyReducedAfterSettlement` — PASS
+10. `conflictingCounterFreezesWallet` — PASS
+11. `twoConflictingTransactionsBeforeReconciliation` — PASS
+12. `clonedWalletStateDetectedOnSync` — PASS
+13. `walletReissuanceAfterEpochIncrement` — PASS
+14. `spendingAboveAllocationIsRejected` — PASS
+15. `forgedWalletCertificateIsRejected` — PASS
+16. `tamperedTransactionAmountFailsSignature` — PASS
+17. `tamperedRecipientFailsSignature` — PASS
+18. `reusedPacketHashFollowsPhase2Idempotency` — PASS
+19. `terminalTransferRejectsRespentFunds` — PASS
+20. `signedSettlementReceiptVerification` — PASS
 
-```text
-Online
-  │
-  ▼
-Authorize Offline Wallet
-  │
-  ▼
-Signed Spending Capability
-  │
-  ▼
-Device goes Offline
-  │
-  ▼
-Offline Transaction
-  │
-  ▼
-Peer
-  │
-  ▼
-Later Reconciliation
-```
+Total Test Suite: 56 tests run, 0 failures, 0 errors.
 
 ### Status
 
-**NOT STARTED**
+**COMPLETED**
 
 ---
 

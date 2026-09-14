@@ -30,6 +30,7 @@ public class ApiController {
     @Autowired private AccountRepository accountRepo;
     @Autowired private TransactionRepository txRepo;
     @Autowired private IdempotencyService idempotency;
+    @Autowired private OfflineWalletService walletService;
 
     // ------------------------------------------------------------------ key
 
@@ -37,9 +38,44 @@ public class ApiController {
     public Map<String, String> getServerPublicKey() {
         return Map.of(
                 "publicKey", serverKey.getPublicKeyBase64(),
-                "algorithm", "RSA-2048 / OAEP-SHA256",
+                "issuerPublicKey", serverKey.getIssuerPublicKeyBase64(),
+                "algorithm", "RSA-2048 / OAEP-SHA256 & Ed25519",
                 "hybridScheme", "RSA-OAEP encrypts an AES-256-GCM session key"
         );
+    }
+
+    // --------------------------------------------------------------- wallet
+
+    @PostMapping("/wallet/allocate")
+    public ResponseEntity<?> allocateWallet(@RequestBody WalletAllocateRequest req) {
+        long durationHours = req.durationHours != null ? req.durationHours : 24L;
+        OfflineWalletService.AllocationResult res = walletService.allocate(req.ownerVpa, req.amount, durationHours);
+        return ResponseEntity.ok(Map.of(
+                "walletId", res.wallet().getWalletId(),
+                "ownerVpa", res.wallet().getOwnerVpa(),
+                "allocatedAmount", res.wallet().getAllocatedAmount(),
+                "walletEpoch", res.wallet().getWalletEpoch(),
+                "validUntil", res.wallet().getValidUntil().toEpochMilli(),
+                "certificate", res.certificate()
+        ));
+    }
+
+    @PostMapping("/wallet/reconcile")
+    public ResponseEntity<?> reconcileWallet(@RequestBody Map<String, String> req) {
+        String walletId = req.get("walletId");
+        OfflineWallet wallet = walletService.reconcileAndClose(walletId);
+        return ResponseEntity.ok(Map.of(
+                "walletId", wallet.getWalletId(),
+                "status", wallet.getStatus().name(),
+                "settledAmount", wallet.getSettledAmount(),
+                "remainingAmount", wallet.getRemainingAmount()
+        ));
+    }
+
+    public static class WalletAllocateRequest {
+        public String ownerVpa;
+        public BigDecimal amount;
+        public Long durationHours;
     }
 
     // ---------------------------------------------------------------- demo

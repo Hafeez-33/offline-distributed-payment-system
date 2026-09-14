@@ -19,7 +19,10 @@ public class Account {
     private String holderName;
 
     @Column(nullable = false, precision = 19, scale = 2)
-    private BigDecimal balance;
+    private BigDecimal balance; // Liquid funds available for online transfers
+
+    @Column(nullable = false, precision = 19, scale = 2)
+    private BigDecimal offlineLockedBalance = BigDecimal.ZERO; // Escrowed funds reserved for offline wallet(s)
 
     @Column(nullable = false, length = 128)
     private String publicKey; // Base64-encoded X.509 SubjectPublicKeyInfo (Ed25519)
@@ -40,8 +43,22 @@ public class Account {
         this.vpa = vpa;
         this.holderName = holderName;
         this.balance = balance;
+        this.offlineLockedBalance = BigDecimal.ZERO;
         this.publicKey = publicKey;
         this.keyAlgorithm = keyAlgorithm;
+    }
+
+    public BigDecimal getTotalFunds() {
+        return (balance != null ? balance : BigDecimal.ZERO)
+                .add(offlineLockedBalance != null ? offlineLockedBalance : BigDecimal.ZERO);
+    }
+
+    public BigDecimal getOfflineLockedBalance() {
+        return offlineLockedBalance != null ? offlineLockedBalance : BigDecimal.ZERO;
+    }
+
+    public void setOfflineLockedBalance(BigDecimal offlineLockedBalance) {
+        this.offlineLockedBalance = offlineLockedBalance != null ? offlineLockedBalance : BigDecimal.ZERO;
     }
 
     public String getVpa() { return vpa; }

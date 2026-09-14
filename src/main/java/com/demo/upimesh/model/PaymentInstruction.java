@@ -26,6 +26,13 @@ public class PaymentInstruction {
     private String signature;          // Base64-encoded Ed25519 digital signature over canonical data
     private String signatureAlgorithm; // e.g. "Ed25519"
 
+    // --- Phase 3 Offline Wallet Extensions ---
+    private String walletId;
+    private Long walletEpoch;
+    private Long sequenceCounter;
+    private BigDecimal cumulativeAmount;
+    private OfflineWalletCertificate walletCertificate;
+
     public PaymentInstruction() {}
 
     public PaymentInstruction(String senderVpa, String receiverVpa, BigDecimal amount,
@@ -36,6 +43,15 @@ public class PaymentInstruction {
     public PaymentInstruction(String senderVpa, String receiverVpa, BigDecimal amount,
                               String pinHash, String nonce, Long signedAt,
                               String signature, String signatureAlgorithm) {
+        this(senderVpa, receiverVpa, amount, pinHash, nonce, signedAt, signature, signatureAlgorithm,
+                null, null, null, null, null);
+    }
+
+    public PaymentInstruction(String senderVpa, String receiverVpa, BigDecimal amount,
+                              String pinHash, String nonce, Long signedAt,
+                              String signature, String signatureAlgorithm,
+                              String walletId, Long walletEpoch, Long sequenceCounter,
+                              BigDecimal cumulativeAmount, OfflineWalletCertificate walletCertificate) {
         this.senderVpa = senderVpa;
         this.receiverVpa = receiverVpa;
         this.amount = amount;
@@ -44,6 +60,11 @@ public class PaymentInstruction {
         this.signedAt = signedAt;
         this.signature = signature;
         this.signatureAlgorithm = signatureAlgorithm;
+        this.walletId = walletId;
+        this.walletEpoch = walletEpoch;
+        this.sequenceCounter = sequenceCounter;
+        this.cumulativeAmount = cumulativeAmount;
+        this.walletCertificate = walletCertificate;
     }
 
     public String getSenderVpa() { return senderVpa; }
@@ -69,4 +90,19 @@ public class PaymentInstruction {
 
     public String getSignatureAlgorithm() { return signatureAlgorithm; }
     public void setSignatureAlgorithm(String signatureAlgorithm) { this.signatureAlgorithm = signatureAlgorithm; }
+
+    public String getWalletId() { return walletId; }
+    public void setWalletId(String walletId) { this.walletId = walletId; }
+
+    public Long getWalletEpoch() { return walletEpoch; }
+    public void setWalletEpoch(Long walletEpoch) { this.walletEpoch = walletEpoch; }
+
+    public Long getSequenceCounter() { return sequenceCounter; }
+    public void setSequenceCounter(Long sequenceCounter) { this.sequenceCounter = sequenceCounter; }
+
+    public BigDecimal getCumulativeAmount() { return cumulativeAmount; }
+    public void setCumulativeAmount(BigDecimal cumulativeAmount) { this.cumulativeAmount = cumulativeAmount; }
+
+    public OfflineWalletCertificate getWalletCertificate() { return walletCertificate; }
+    public void setWalletCertificate(OfflineWalletCertificate walletCertificate) { this.walletCertificate = walletCertificate; }
 }

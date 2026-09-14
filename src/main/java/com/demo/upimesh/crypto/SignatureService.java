@@ -24,6 +24,7 @@ public class SignatureService {
 
     public static final String ALGORITHM = "Ed25519";
     public static final String CANONICAL_VERSION = "v1";
+    public static final String CANONICAL_VERSION_V3 = "v3_tx";
 
     /**
      * Generate a new Ed25519 keypair for an account.
@@ -36,16 +37,11 @@ public class SignatureService {
     /**
      * Deterministic canonical serialization of a payment instruction.
      *
-     * Format:
+     * Format for Phase 1 / backward compatible:
      *   v1|sender=<senderVpa>|receiver=<receiverVpa>|amount=<amount>|nonce=<nonce>|signedAt=<signedAt>
      *
-     * Rules:
-     *   - Version is fixed to "v1"
-     *   - senderVpa and receiverVpa are trimmed and converted to lowercase
-     *   - amount is formatted with exactly 2 decimal places in plain decimal notation (no scientific notation)
-     *   - nonce is trimmed and lowercased
-     *   - signedAt is represented as decimal epoch milliseconds
-     *   - Output encoded strictly as UTF-8 bytes
+     * Format for Phase 3 (when walletId is present):
+     *   v3_tx|walletId=<walletId>|epoch=<epoch>|counter=<counter>|cumAmount=<cumAmount>|sender=<sender>|receiver=<receiver>|amount=<amount>|nonce=<nonce>|signedAt=<signedAt>
      */
     public byte[] getCanonicalBytes(PaymentInstruction instruction) {
         Objects.requireNonNull(instruction, "instruction must not be null");
@@ -60,6 +56,26 @@ public class SignatureService {
         String amount = instruction.getAmount().setScale(2, RoundingMode.HALF_UP).toPlainString();
         String nonce = instruction.getNonce().trim().toLowerCase();
         String signedAt = String.valueOf(instruction.getSignedAt());
+
+        if (instruction.getWalletId() != null) {
+            String walletId = instruction.getWalletId().trim();
+            long epoch = instruction.getWalletEpoch() != null ? instruction.getWalletEpoch() : 1L;
+            long counter = instruction.getSequenceCounter() != null ? instruction.getSequenceCounter() : 1L;
+            BigDecimal cum = instruction.getCumulativeAmount() != null ? instruction.getCumulativeAmount() : instruction.getAmount();
+            String cumAmount = cum.setScale(2, RoundingMode.HALF_UP).toPlainString();
+
+            String canonicalString = CANONICAL_VERSION_V3
+                    + "|walletId=" + walletId
+                    + "|epoch=" + epoch
+                    + "|counter=" + counter
+                    + "|cumAmount=" + cumAmount
+                    + "|sender=" + sender
+                    + "|receiver=" + receiver
+                    + "|amount=" + amount
+                    + "|nonce=" + nonce
+                    + "|signedAt=" + signedAt;
+            return canonicalString.getBytes(StandardCharsets.UTF_8);
+        }
 
         String canonicalString = CANONICAL_VERSION
                 + "|sender=" + sender
@@ -131,5 +147,73 @@ public class SignatureService {
         byte[] keyBytes = Base64.getDecoder().decode(base64PublicKey);
         KeyFactory kf = KeyFactory.getInstance(ALGORITHM);
         return kf.generatePublic(new X509EncodedKeySpec(keyBytes));
+    }
+
+    /**
+     * Sign an OfflineWalletCertificate using the server's Ed25519 issuer private key.
+     */
+    public String signCertificate(com.demo.upimesh.model.OfflineWalletCertificate cert, PrivateKey issuerPrivateKey) throws Exception {
+        Objects.requireNonNull(cert, "cert must not be null");
+        Objects.requireNonNull(issuerPrivateKey, "issuerPrivateKey must not be null");
+        byte[] canonicalBytes = cert.getCanonicalBytes();
+
+        Signature sig = Signature.getInstance(ALGORITHM);
+        sig.initSign(issuerPrivateKey);
+        sig.update(canonicalBytes);
+        return Base64.getEncoder().encodeToString(sig.sign());
+    }
+
+    /**
+     * Verify an OfflineWalletCertificate signature using the server's Ed25519 issuer public key.
+     */
+    public boolean verifyCertificate(com.demo.upimesh.model.OfflineWalletCertificate cert, PublicKey issuerPublicKey) {
+        if (cert == null || cert.issuerSignature() == null || cert.issuerSignature().isBlank() || issuerPublicKey == null) {
+            return false;
+        }
+        try {
+            byte[] canonicalBytes = cert.getCanonicalBytes();
+            byte[] sigBytes = Base64.getDecoder().decode(cert.issuerSignature());
+
+            Signature sig = Signature.getInstance(ALGORITHM);
+            sig.initVerify(issuerPublicKey);
+            sig.update(canonicalBytes);
+            return sig.verify(sigBytes);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Sign a SettlementReceipt using the server's Ed25519 issuer private key.
+     */
+    public String signReceipt(com.demo.upimesh.model.SettlementReceipt receipt, PrivateKey issuerPrivateKey) throws Exception {
+        Objects.requireNonNull(receipt, "receipt must not be null");
+        Objects.requireNonNull(issuerPrivateKey, "issuerPrivateKey must not be null");
+        byte[] canonicalBytes = receipt.getCanonicalBytes();
+
+        Signature sig = Signature.getInstance(ALGORITHM);
+        sig.initSign(issuerPrivateKey);
+        sig.update(canonicalBytes);
+        return Base64.getEncoder().encodeToString(sig.sign());
+    }
+
+    /**
+     * Verify a SettlementReceipt signature using the server's Ed25519 issuer public key.
+     */
+    public boolean verifyReceipt(com.demo.upimesh.model.SettlementReceipt receipt, PublicKey issuerPublicKey) {
+        if (receipt == null || receipt.serverSignature() == null || receipt.serverSignature().isBlank() || issuerPublicKey == null) {
+            return false;
+        }
+        try {
+            byte[] canonicalBytes = receipt.getCanonicalBytes();
+            byte[] sigBytes = Base64.getDecoder().decode(receipt.serverSignature());
+
+            Signature sig = Signature.getInstance(ALGORITHM);
+            sig.initVerify(issuerPublicKey);
+            sig.update(canonicalBytes);
+            return sig.verify(sigBytes);
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

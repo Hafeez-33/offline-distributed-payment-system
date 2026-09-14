@@ -104,6 +104,52 @@ public class DemoService {
     }
 
     /**
+     * Simulates the sender's phone creating an offline payment instruction under Phase 3:
+     *   1. Build PaymentInstruction with walletId, epoch, sequence counter, cumulative amount, certificate.
+     *   2. Sign canonical instruction bytes using sender's Ed25519 private key.
+     *   3. Encrypt payload with server's RSA public key (hybrid RSA+AES).
+     *   4. Wrap in a MeshPacket.
+     */
+    public MeshPacket createOfflinePacket(String senderVpa, String receiverVpa,
+                                          BigDecimal amount, String pin, int ttl,
+                                          String walletId, Long walletEpoch,
+                                          long sequenceCounter, BigDecimal cumulativeAmount,
+                                          com.demo.upimesh.model.OfflineWalletCertificate certificate) throws Exception {
+        PrivateKey senderPrivateKey = clientPrivateKeys.get(senderVpa);
+        if (senderPrivateKey == null) {
+            throw new IllegalStateException("Simulated sender device has no signing key for: " + senderVpa);
+        }
+
+        PaymentInstruction instruction = new PaymentInstruction(
+                senderVpa,
+                receiverVpa,
+                amount,
+                sha256Hex(pin),
+                UUID.randomUUID().toString(),
+                Instant.now().toEpochMilli(),
+                null,
+                SignatureService.ALGORITHM,
+                walletId,
+                walletEpoch,
+                sequenceCounter,
+                cumulativeAmount,
+                certificate
+        );
+
+        String signature = signatureService.sign(instruction, senderPrivateKey);
+        instruction.setSignature(signature);
+
+        String ciphertext = crypto.encrypt(instruction, serverKey.getPublicKey());
+
+        MeshPacket packet = new MeshPacket();
+        packet.setPacketId(UUID.randomUUID().toString());
+        packet.setTtl(ttl);
+        packet.setCreatedAt(Instant.now().toEpochMilli());
+        packet.setCiphertext(ciphertext);
+        return packet;
+    }
+
+    /**
      * Helper for test context to access simulated client private keys without exposing them via REST.
      */
     public PrivateKey getSimulatedClientPrivateKey(String vpa) {
