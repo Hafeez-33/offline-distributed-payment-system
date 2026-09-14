@@ -21,19 +21,29 @@ public class PaymentInstruction {
     private String receiverVpa;
     private BigDecimal amount;
     private String pinHash;
-    private String nonce;     // UUID, unique per payment intent
-    private Long signedAt;    // epoch millis, when sender signed
+    private String nonce;              // UUID, unique per payment intent
+    private Long signedAt;             // epoch millis, when sender signed
+    private String signature;          // Base64-encoded Ed25519 digital signature over canonical data
+    private String signatureAlgorithm; // e.g. "Ed25519"
 
     public PaymentInstruction() {}
 
     public PaymentInstruction(String senderVpa, String receiverVpa, BigDecimal amount,
                               String pinHash, String nonce, Long signedAt) {
+        this(senderVpa, receiverVpa, amount, pinHash, nonce, signedAt, null, "Ed25519");
+    }
+
+    public PaymentInstruction(String senderVpa, String receiverVpa, BigDecimal amount,
+                              String pinHash, String nonce, Long signedAt,
+                              String signature, String signatureAlgorithm) {
         this.senderVpa = senderVpa;
         this.receiverVpa = receiverVpa;
         this.amount = amount;
         this.pinHash = pinHash;
         this.nonce = nonce;
         this.signedAt = signedAt;
+        this.signature = signature;
+        this.signatureAlgorithm = signatureAlgorithm;
     }
 
     public String getSenderVpa() { return senderVpa; }
@@ -53,4 +63,10 @@ public class PaymentInstruction {
 
     public Long getSignedAt() { return signedAt; }
     public void setSignedAt(Long signedAt) { this.signedAt = signedAt; }
+
+    public String getSignature() { return signature; }
+    public void setSignature(String signature) { this.signature = signature; }
+
+    public String getSignatureAlgorithm() { return signatureAlgorithm; }
+    public void setSignatureAlgorithm(String signatureAlgorithm) { this.signatureAlgorithm = signatureAlgorithm; }
 }

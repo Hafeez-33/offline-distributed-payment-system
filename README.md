@@ -186,24 +186,23 @@ This test creates one packet, fires 3 threads at `BridgeIngestionService.ingest(
 
 ## The three hard problems and how they're solved
 
-### Problem 1: Untrusted intermediates
+### Problem 1: Untrusted intermediates & sender authorization
 
-A random stranger's phone is carrying your transaction. How do you stop them from reading the amount or changing it?
+Two distinct cryptographic problems must be solved when payments route through untrusted intermediaries:
 
-**Solution: Hybrid encryption (RSA-OAEP + AES-GCM).**
+1. **Confidentiality & In-Flight Integrity (Transport Envelope)**: Intermediaries must not read or tamper with transaction details.
+   - **Solution**: **Hybrid Encryption (RSA-2048-OAEP + AES-256-GCM)**. The sender encrypts the payload using the server's public key. AES-GCM guarantees authenticated encryption; any bit flip causes decryption failure.
+2. **Sender Authorization (Cryptographic Identity)**: Encryption alone does *not* prove who created the payment. Since the server's RSA public key is public, anyone could craft a valid ciphertext claiming to be `alice@demo`.
+   - **Solution**: **Ed25519 Digital Signatures**. Before encryption, the sender signs a canonical representation of the transaction (`v1|sender=...|receiver=...|amount=...|nonce=...|signedAt=...`) with their Ed25519 private key. Upon decryption, the server resolves the sender's authoritative registered public key from the database and verifies the signature before any settlement occurs.
 
-The sender encrypts the payload with the server's public key. Only the server holds the private key, so intermediates see opaque ciphertext.
+```text
+Encryption (RSA-OAEP + AES-GCM) ──► Confidentiality & Payload Integrity
+Ed25519 Digital Signature       ──► Cryptographic Sender Authorization
+SHA-256 (Ciphertext Hash)       ──► Packet Identity & Deduplication Gate
+Freshness & Nonce               ──► Replay Attack Protection
+```
 
-But RSA can only encrypt small data (~245 bytes for a 2048-bit key), and our payload is JSON that could exceed that. So we use the standard hybrid pattern:
-
-1. Generate a fresh AES-256 key for *this packet*.
-2. Encrypt the JSON with **AES-256-GCM** (fast + authenticated).
-3. Encrypt just the AES key with **RSA-OAEP**.
-4. Concatenate: `[256 bytes RSA-encrypted AES key][12 bytes IV][AES ciphertext + 16-byte GCM tag]`.
-
-**Why GCM specifically?** It's authenticated encryption. If an intermediate flips one bit anywhere in the ciphertext, decryption throws an exception — the GCM tag won't verify. The server cannot be tricked into processing tampered data.
-
-This is the same scheme TLS uses. See `HybridCryptoService.java`.
+> **Note on Private Key Storage**: In this prototype backend simulator, `DemoService` maintains an in-memory client private key store to simulate mobile phones creating payments. In a production mobile client, private keys must be generated inside hardware-backed storage (Android Keystore / StrongBox / Apple Secure Enclave) where keys are non-exportable and protected by biometric or PIN authentication.
 
 ### Problem 2: The duplicate-storm
 
@@ -236,8 +235,8 @@ An attacker who captured a ciphertext weeks ago could replay it whenever conveni
 
 **Solution: Two layers.**
 
-1. **Inside the encrypted payload**, the sender includes `signedAt` (epoch millis). The server rejects any packet older than 24 hours. The attacker can't change `signedAt` without breaking the GCM tag.
-2. **Inside the encrypted payload**, the sender includes a **nonce** (UUID). Even if Alice legitimately sends Bob ₹100 twice, the nonces differ → ciphertexts differ → hashes differ → both settle. But a *replay* of one specific signed packet is byte-identical, so the idempotency cache catches it.
+1. **Inside the encrypted payload**, the sender includes `signedAt` (epoch millis). The server rejects any packet older than 24 hours (or future-dated by >5 minutes). The attacker can't change `signedAt` without breaking the signature and GCM tag.
+2. **Inside the encrypted payload**, the sender includes a **nonce** (UUID). Even if Alice legitimately sends Bob ₹100 twice, the nonces differ → canonical strings differ → signatures differ → ciphertexts differ → hashes differ → both settle. But a *replay* of one specific signed packet is byte-identical, so the idempotency cache catches it.
 
 See `BridgeIngestionService.java` for the freshness check.
 
@@ -267,15 +266,16 @@ upi-offline-mesh/
         │
         ├── crypto/                          ── Cryptography layer
         │   ├── ServerKeyHolder.java         Generates RSA-2048 keypair on startup
-        │   └── HybridCryptoService.java     RSA-OAEP + AES-256-GCM encrypt/decrypt + ciphertext hash
+        │   ├── HybridCryptoService.java     RSA-OAEP + AES-256-GCM encrypt/decrypt + ciphertext hash
+        │   └── SignatureService.java        Ed25519 signing, verification, and canonical serialization
         │
         ├── service/                         ── Business logic
-        │   ├── DemoService.java             Seeds accounts, simulates a sender phone
+        │   ├── DemoService.java             Seeds accounts, simulates a sender phone (with Ed25519 keys)
         │   ├── VirtualDevice.java           One simulated phone in the mesh
         │   ├── MeshSimulatorService.java    Gossip protocol across virtual devices
         │   ├── IdempotencyService.java      ConcurrentHashMap = JVM-local Redis SETNX
         │   ├── SettlementService.java       @Transactional debit + credit + ledger insert
-        │   └── BridgeIngestionService.java  THE pipeline: hash → claim → decrypt → freshness → settle
+        │   └── BridgeIngestionService.java  THE pipeline: hash → claim → decrypt → freshness → verify sig → settle
         │
         ├── controller/                      ── HTTP layer
         │   ├── ApiController.java           All REST endpoints
@@ -285,7 +285,10 @@ upi-offline-mesh/
             └── AppConfig.java               @EnableScheduling for cache eviction
 
 src/test/java/com/demo/upimesh/
-└── IdempotencyConcurrencyTest.java          The 3-bridges-at-once test + tamper test
+├── CryptographicIdentityTest.java           Sender identity & authorization verification integration tests
+├── IdempotencyConcurrencyTest.java          The 3-bridges-at-once test + tamper test
+└── crypto/
+    └── SignatureServiceTest.java            Ed25519 unit tests & canonicalization determinism tests
 ```
 
 ---

@@ -21,15 +21,27 @@ public class Account {
     @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal balance;
 
+    @Column(nullable = false, length = 128)
+    private String publicKey; // Base64-encoded X.509 SubjectPublicKeyInfo (Ed25519)
+
+    @Column(nullable = false, length = 16)
+    private String keyAlgorithm; // "Ed25519"
+
     @Version  // Optimistic locking — prevents lost updates on concurrent transfers
     private Long version;
 
     public Account() {}
 
     public Account(String vpa, String holderName, BigDecimal balance) {
+        this(vpa, holderName, balance, null, "Ed25519");
+    }
+
+    public Account(String vpa, String holderName, BigDecimal balance, String publicKey, String keyAlgorithm) {
         this.vpa = vpa;
         this.holderName = holderName;
         this.balance = balance;
+        this.publicKey = publicKey;
+        this.keyAlgorithm = keyAlgorithm;
     }
 
     public String getVpa() { return vpa; }
@@ -40,6 +52,12 @@ public class Account {
 
     public BigDecimal getBalance() { return balance; }
     public void setBalance(BigDecimal balance) { this.balance = balance; }
+
+    public String getPublicKey() { return publicKey; }
+    public void setPublicKey(String publicKey) { this.publicKey = publicKey; }
+
+    public String getKeyAlgorithm() { return keyAlgorithm; }
+    public void setKeyAlgorithm(String keyAlgorithm) { this.keyAlgorithm = keyAlgorithm; }
 
     public Long getVersion() { return version; }
     public void setVersion(Long version) { this.version = version; }
