@@ -204,30 +204,36 @@ Freshness & Nonce               ──► Replay Attack Protection
 
 > **Note on Private Key Storage**: In this prototype backend simulator, `DemoService` maintains an in-memory client private key store to simulate mobile phones creating payments. In a production mobile client, private keys must be generated inside hardware-backed storage (Android Keystore / StrongBox / Apple Secure Enclave) where keys are non-exportable and protected by biometric or PIN authentication.
 
-### Problem 2: The duplicate-storm
+### Problem 2: The duplicate-storm & reliable settlement
 
-Three bridge nodes hold the same packet. They all walk outside at the same instant. They all POST to `/api/bridge/ingest` within milliseconds of each other. If you naively process all three, the sender is debited ₹1500 instead of ₹500.
+Three bridge nodes hold the same packet. They all walk outside at the same instant. They all POST to `/api/bridge/ingest` within milliseconds of each other. If you naively process all three, the sender is debited ₹1500 instead of ₹500. Furthermore, if a transient database locking collision occurs, a naive in-memory claim could permanently drop valid retries.
 
-**Solution: Atomic compare-and-set on the ciphertext hash.**
+**Reliability Guarantee:**
+The system provides **at-least-once delivery with effectively-once settlement semantics within the authoritative database**. It does NOT claim global exactly-once delivery across untrusted networks, but guarantees that every unique payment instruction has an effectively-once state transition on the financial ledger.
 
-The very first thing the server does on receiving a packet is compute `SHA-256(ciphertext)` and try to "claim" that hash:
+**Solution: Multi-layered deduplication and transaction-safe retry.**
 
-```java
-// IdempotencyService.java
-Instant prev = seen.putIfAbsent(packetHash, now);
-return prev == null;  // true = first claimer, false = duplicate
-```
+1. **Authoritative Database Barrier (`UNIQUE(packet_hash)`)**:
+   The relational database `UNIQUE` constraint on `Transaction.packetHash` is the absolute source of truth. No in-memory cache replaces this authority.
 
-`ConcurrentHashMap.putIfAbsent` is atomic. Even if 100 threads call it at the exact same nanosecond, exactly one returns `null` (the first claimer) and the rest return the existing entry. Only the first claimer proceeds to decrypt and settle. The rest are short-circuited as `DUPLICATE_DROPPED`.
+2. **In-Flight Concurrency Gate (`tryAcquire` / `release`)**:
+   `IdempotencyService` uses a thread-safe in-memory map to act as an in-flight concurrency gate:
+   - `tryAcquire(packetHash)`: Atomically admits the first thread to process the packet and immediately rejects concurrent duplicates.
+   - `release(packetHash)`: If transient processing errors occur before a database commit (e.g. database retry exhaustion, validation failures), the in-flight claim is cleanly released, preventing valid retries from being permanently dropped.
+   - `markCompleted(packetHash)`: When the transaction successfully commits to the database, the hash is retained in the fast-path cache.
 
-**Why hash the ciphertext, not the packetId or the cleartext?**
-- `packetId` can be rewritten by a malicious intermediate. Two copies of the same payment could have different packetIds. Bad key.
-- The cleartext requires decryption first. We want to dedupe *before* spending CPU on RSA.
-- The ciphertext is authenticated by GCM, so any tampering is detectable on decrypt. Two legitimate deliveries of the same payment have byte-identical ciphertexts (AES is deterministic for a given key+IV+plaintext, and the same packet means the same key+IV+plaintext).
+3. **Lost-Response Recovery (Recovery Fast-Path)**:
+   Before attempting to acquire an in-flight lock, `BridgeIngestionService` checks `TransactionRepository.findByPacketHash(hash)`. If a packet was already committed (e.g., if a client or bridge lost the HTTP response after settlement and retransmitted), the server immediately returns the original committed transaction result (`SETTLED` or `REJECTED`) without re-executing ledger updates or moving balances twice.
 
-In production this `ConcurrentHashMap` becomes Redis: `SET key NX EX 86400`. Same semantics, distributed across replicas.
+4. **Bounded Optimistic-Lock Retry**:
+   Account entities use `@Version` fields for optimistic concurrency control. Under high concurrency on the same account (e.g. concurrent payments from Alice), `SettlementService` performs bounded retries (up to 3 attempts with exponential backoff and jitter: ~25ms, ~50ms). Crucially, **each retry executes in an independent, fresh database transaction** (`PROPAGATION_REQUIRES_NEW`) to guarantee transactional isolation.
 
-There's also a defense-in-depth fallback: `transactions.packet_hash` has a unique index. If the cache layer ever fails and two settlements somehow try to write the same hash, the database rejects the second one.
+5. **Deterministic Failure Classification**:
+   - `INVALID` (e.g. `invalid_signature`, `stale_packet`, `unknown_sender`): Permanent rejection, claim released.
+   - `REJECTED` (e.g. `insufficient_balance`): Permanent business failure, recorded as a `REJECTED` transaction in the database, completed claim retained.
+   - `TRANSIENT_FAILURE` (e.g. `transient_settlement_failure`): Transient failure after retry exhaustion, in-flight claim released, bridge can retry later.
+
+---
 
 ### Problem 3: Replay attacks
 
@@ -260,7 +266,7 @@ upi-offline-mesh/
         │   ├── Account.java                 JPA entity. @Version = optimistic lock
         │   ├── AccountRepository.java       Spring Data JPA
         │   ├── Transaction.java             Settled-tx ledger. unique idx on packetHash
-        │   ├── TransactionRepository.java   Spring Data JPA
+        │   ├── TransactionRepository.java   Spring Data JPA (findByPacketHash)
         │   ├── MeshPacket.java              Wire format. Outer fields readable, ciphertext opaque
         │   └── PaymentInstruction.java      Decrypted payload (sender/receiver/amount/nonce/time)
         │
@@ -273,9 +279,10 @@ upi-offline-mesh/
         │   ├── DemoService.java             Seeds accounts, simulates a sender phone (with Ed25519 keys)
         │   ├── VirtualDevice.java           One simulated phone in the mesh
         │   ├── MeshSimulatorService.java    Gossip protocol across virtual devices
-        │   ├── IdempotencyService.java      ConcurrentHashMap = JVM-local Redis SETNX
-        │   ├── SettlementService.java       @Transactional debit + credit + ledger insert
-        │   └── BridgeIngestionService.java  THE pipeline: hash → claim → decrypt → freshness → verify sig → settle
+        │   ├── IdempotencyService.java      In-flight concurrency gate (tryAcquire/release)
+        │   ├── SettlementService.java       Fresh-transaction optimistic-lock retry & ledger updates
+        │   ├── TransientSettlementException.java Dedicated exception on retry exhaustion
+        │   └── BridgeIngestionService.java  THE pipeline: DB lookup → tryAcquire → decrypt → freshness → verify sig → settle
         │
         ├── controller/                      ── HTTP layer
         │   ├── ApiController.java           All REST endpoints
@@ -287,6 +294,7 @@ upi-offline-mesh/
 src/test/java/com/demo/upimesh/
 ├── CryptographicIdentityTest.java           Sender identity & authorization verification integration tests
 ├── IdempotencyConcurrencyTest.java          The 3-bridges-at-once test + tamper test
+├── ReliableIdempotencyTest.java             13 Phase 2 reliability, retry, lost-response, and concurrency tests
 └── crypto/
     └── SignatureServiceTest.java            Ed25519 unit tests & canonicalization determinism tests
 ```
@@ -330,10 +338,10 @@ X-Hop-Count: 3
 Response:
 ```json
 {
-  "outcome": "SETTLED",                     // or "DUPLICATE_DROPPED" or "INVALID"
+  "outcome": "SETTLED",                     // or "DUPLICATE_DROPPED", "INVALID", "REJECTED", "TRANSIENT_FAILURE"
   "packetHash": "a3f8c9...",
-  "reason": null,                            // populated on INVALID
-  "transactionId": 42                        // populated on SETTLED
+  "reason": null,                            // populated on INVALID / REJECTED / TRANSIENT_FAILURE
+  "transactionId": 42                        // populated on SETTLED or REJECTED
 }
 ```
 
@@ -346,11 +354,12 @@ Run all tests:
 mvnw.cmd test
 ```
 
-The three included tests:
+Key test suites:
 
-- **`encryptDecryptRoundTrip`** — sanity-check that hybrid encryption is symmetric.
-- **`tamperedCiphertextIsRejected`** — flip a byte in the ciphertext, verify that `BridgeIngestionService` returns `INVALID` instead of crashing or settling.
-- **`singlePacketDeliveredByThreeBridgesSettlesExactlyOnce`** — the headline test. Three threads, one packet, simultaneous delivery. Asserts exactly one `SETTLED`, two `DUPLICATE_DROPPED`, and that the sender's balance changed by exactly the amount once.
+- **`ReliableIdempotencyTest`** — 13 tests covering retry on transient failures, optimistic lock conflict recovery, 10-thread concurrent duplicate delivery, lost HTTP response recovery, balance conservation across concurrent payments, and database deduplication guarantees.
+- **`CryptographicIdentityTest`** — 10 tests covering Ed25519 signature verification, forged signatures, cross-account keys, algorithm validation, and freshness boundaries.
+- **`IdempotencyConcurrencyTest`** — 3 tests verifying parallel bridge uploads and ciphertext tamper resistance.
+- **`SignatureServiceTest`** — Deterministic canonical serialization and digital signature unit tests.
 
 ---
 
