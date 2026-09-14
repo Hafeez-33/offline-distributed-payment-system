@@ -42,15 +42,14 @@ set DOWNLOAD_URL="https://repo.maven.apache.org/maven2/org/apache/maven/wrapper/
 
 @REM First-run: download the wrapper JAR if missing.
 if not exist %WRAPPER_JAR% (
-    echo Downloading Maven Wrapper from %DOWNLOAD_URL% ...
-    powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri %DOWNLOAD_URL% -OutFile %WRAPPER_JAR%}"
+    powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $dir = [System.IO.Path]::GetDirectoryName('%WRAPPER_JAR:"=%'); if (!(Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir }; Invoke-WebRequest -Uri '%DOWNLOAD_URL:"=%' -OutFile '%WRAPPER_JAR:"=%'}"
     if not exist %WRAPPER_JAR% (
         echo ERROR: failed to download Maven Wrapper.
         goto error
     )
 )
 
-%MAVEN_JAVA_EXE% ^
+"%MAVEN_JAVA_EXE%" ^
   %JVM_CONFIG_MAVEN_PROPS% ^
   %MAVEN_OPTS% ^
   -classpath %WRAPPER_JAR% ^

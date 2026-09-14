@@ -2,6 +2,7 @@ package com.demo.upimesh.service;
 
 import com.demo.upimesh.crypto.HybridCryptoService;
 import com.demo.upimesh.crypto.ServerKeyHolder;
+import com.demo.upimesh.crypto.SignatureService;
 import com.demo.upimesh.model.Account;
 import com.demo.upimesh.model.AccountRepository;
 import com.demo.upimesh.model.MeshPacket;
@@ -13,14 +14,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.security.KeyPair;
 import java.security.MessageDigest;
+import java.security.PrivateKey;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Helper service that:
- *   - seeds demo accounts on startup
- *   - simulates "sender phone creates an encrypted packet" flow
+ *   - seeds demo accounts and their Ed25519 keypairs on startup
+ *   - maintains a simulated client-side private key store (simulating mobile device secure enclaves)
+ *   - simulates "sender phone creates, signs, and encrypts a packet" flow
  */
 @Service
 public class DemoService {
@@ -30,30 +36,48 @@ public class DemoService {
     @Autowired private AccountRepository accounts;
     @Autowired private HybridCryptoService crypto;
     @Autowired private ServerKeyHolder serverKey;
+    @Autowired private SignatureService signatureService;
+
+    // Simulated client-side secure keystores (in production, private keys reside inside Android StrongBox/TEE)
+    private final Map<String, PrivateKey> clientPrivateKeys = new ConcurrentHashMap<>();
 
     @PostConstruct
-    public void seedAccounts() {
+    public void seedAccounts() throws Exception {
         if (accounts.count() == 0) {
-            accounts.save(new Account("alice@demo", "Alice",   new BigDecimal("5000.00")));
-            accounts.save(new Account("bob@demo",   "Bob",     new BigDecimal("1000.00")));
-            accounts.save(new Account("carol@demo", "Carol",   new BigDecimal("2500.00")));
-            accounts.save(new Account("dave@demo",  "Dave",    new BigDecimal("500.00")));
-            log.info("Seeded 4 demo accounts");
+            seedAccount("alice@demo", "Alice", new BigDecimal("5000.00"));
+            seedAccount("bob@demo",   "Bob",   new BigDecimal("1000.00"));
+            seedAccount("carol@demo", "Carol", new BigDecimal("2500.00"));
+            seedAccount("dave@demo",  "Dave",  new BigDecimal("500.00"));
+            log.info("Seeded 4 demo accounts with registered Ed25519 public keys");
         }
+    }
+
+    private void seedAccount(String vpa, String name, BigDecimal balance) throws Exception {
+        KeyPair keyPair = signatureService.generateKeyPair();
+        String encodedPublicKey = signatureService.encodePublicKey(keyPair.getPublic());
+
+        Account account = new Account(vpa, name, balance, encodedPublicKey, SignatureService.ALGORITHM);
+        accounts.save(account);
+
+        // Store private key in simulated device wallet
+        clientPrivateKeys.put(vpa, keyPair.getPrivate());
     }
 
     /**
      * Simulates the sender's phone:
      *   1. Build a PaymentInstruction with a fresh nonce + signedAt timestamp.
-     *   2. Encrypt with the server's public key (hybrid RSA+AES).
-     *   3. Wrap in a MeshPacket with TTL.
-     *
-     * In a real Android app, this exact code (minus the server-side reference)
-     * would run on the phone. The phone would have already cached the server's
-     * public key during a previous online session.
+     *   2. Sign the canonical instruction bytes using the sender's Ed25519 private key.
+     *   3. Attach signature and algorithm to the PaymentInstruction.
+     *   4. Encrypt the entire instruction with the server's public key (hybrid RSA+AES).
+     *   5. Wrap in a MeshPacket with TTL.
      */
     public MeshPacket createPacket(String senderVpa, String receiverVpa,
                                    BigDecimal amount, String pin, int ttl) throws Exception {
+        PrivateKey senderPrivateKey = clientPrivateKeys.get(senderVpa);
+        if (senderPrivateKey == null) {
+            throw new IllegalStateException("Simulated sender device has no signing key for: " + senderVpa);
+        }
+
         PaymentInstruction instruction = new PaymentInstruction(
                 senderVpa,
                 receiverVpa,
@@ -63,6 +87,12 @@ public class DemoService {
                 Instant.now().toEpochMilli()        // signedAt — for freshness check
         );
 
+        // Sign canonical payment data before encryption
+        String signature = signatureService.sign(instruction, senderPrivateKey);
+        instruction.setSignature(signature);
+        instruction.setSignatureAlgorithm(SignatureService.ALGORITHM);
+
+        // Encrypt the signed payment instruction
         String ciphertext = crypto.encrypt(instruction, serverKey.getPublicKey());
 
         MeshPacket packet = new MeshPacket();
@@ -71,6 +101,20 @@ public class DemoService {
         packet.setCreatedAt(Instant.now().toEpochMilli());
         packet.setCiphertext(ciphertext);
         return packet;
+    }
+
+    /**
+     * Helper for test context to access simulated client private keys without exposing them via REST.
+     */
+    public PrivateKey getSimulatedClientPrivateKey(String vpa) {
+        return clientPrivateKeys.get(vpa);
+    }
+
+    /**
+     * Helper for test context to register simulated client keys.
+     */
+    public void registerSimulatedClientKey(String vpa, PrivateKey privateKey) {
+        clientPrivateKeys.put(vpa, privateKey);
     }
 
     private String sha256Hex(String input) throws Exception {
