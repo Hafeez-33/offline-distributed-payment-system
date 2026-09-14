@@ -52,6 +52,8 @@ public class BridgeIngestionService {
     @Autowired private TransactionRepository transactions;
     @Autowired private IdempotencyService idempotency;
     @Autowired private SettlementService settlement;
+    @Autowired private com.demo.upimesh.model.OfflineWalletRepository walletRepository;
+    @Autowired private com.demo.upimesh.crypto.ServerKeyHolder serverKeyHolder;
 
     @Value("${upi.mesh.packet-max-age-seconds:86400}")
     private long maxAgeSeconds;
@@ -70,8 +72,12 @@ public class BridgeIngestionService {
                 idempotency.markCompleted(packetHash);
                 if (tx.getStatus() == Transaction.Status.SETTLED) {
                     return IngestResult.settled(packetHash, tx);
+                } else if (tx.getStatus() == Transaction.Status.CONFLICTING) {
+                    return IngestResult.conflicting(packetHash, tx, tx.getConflictReason());
+                } else if (tx.getStatus() == Transaction.Status.PENDING_SEQUENCE_GAP) {
+                    return IngestResult.pendingGap(packetHash, tx);
                 } else {
-                    return IngestResult.rejected(packetHash, tx, "previously_rejected");
+                    return IngestResult.rejected(packetHash, tx, tx.getConflictReason() != null ? tx.getConflictReason() : "previously_rejected");
                 }
             }
 
@@ -159,7 +165,77 @@ public class BridgeIngestionService {
                 return IngestResult.invalid(packetHash, "invalid_signature");
             }
 
-            // ---- 7. Settle with retry ----
+            // ---- 7. Phase 3: Offline Wallet Certificate & Epoch Validation ----
+            if (instruction.getWalletId() != null && !instruction.getWalletId().isBlank()) {
+                com.demo.upimesh.model.OfflineWalletCertificate cert = instruction.getWalletCertificate();
+                if (cert == null) {
+                    idempotency.release(packetHash);
+                    log.warn("Missing wallet certificate for offline payment in packet {}", packetHash);
+                    return IngestResult.invalid(packetHash, "missing_wallet_certificate");
+                }
+
+                // 7.1 Verify certificate issuer signature
+                boolean certSigOk = signatureService.verifyCertificate(cert, serverKeyHolder.getIssuerPublicKey());
+                if (!certSigOk) {
+                    idempotency.release(packetHash);
+                    log.warn("Forged or invalid wallet certificate signature in packet {}", packetHash);
+                    return IngestResult.invalid(packetHash, "forged_wallet_certificate");
+                }
+
+                // 7.2 Verify certificate validity window
+                long nowMs = Instant.now().toEpochMilli();
+                if (nowMs > cert.validUntil()) {
+                    idempotency.release(packetHash);
+                    log.warn("Expired wallet certificate in packet {}: expired at {}", packetHash, cert.validUntil());
+                    return IngestResult.invalid(packetHash, "expired_wallet_certificate");
+                }
+
+                // 7.3 Verify wallet ownership & public key binding
+                if (!cert.ownerVpa().equalsIgnoreCase(sender.getVpa())) {
+                    idempotency.release(packetHash);
+                    return IngestResult.invalid(packetHash, "certificate_owner_mismatch");
+                }
+                if (!cert.ownerPublicKey().equals(sender.getPublicKey())) {
+                    idempotency.release(packetHash);
+                    return IngestResult.invalid(packetHash, "certificate_key_mismatch");
+                }
+
+                // 7.4 Verify wallet entity in DB
+                var walletOpt = walletRepository.findByWalletId(instruction.getWalletId().trim());
+                if (walletOpt.isEmpty()) {
+                    idempotency.release(packetHash);
+                    return IngestResult.invalid(packetHash, "unknown_wallet_id");
+                }
+                var wallet = walletOpt.get();
+
+                // 7.5 Verify wallet epoch
+                if (instruction.getWalletEpoch() == null || !instruction.getWalletEpoch().equals(wallet.getWalletEpoch())) {
+                    idempotency.release(packetHash);
+                    log.warn("Obsolete wallet epoch {} (active is {}) in packet {}",
+                            instruction.getWalletEpoch(), wallet.getWalletEpoch(), packetHash);
+                    return IngestResult.invalid(packetHash, "obsolete_wallet_epoch");
+                }
+
+                // 7.6 Terminal Transfer Policy Enforcement:
+                // Sender must be wallet owner; payee cannot re-spend offline wallet funds
+                if (!instruction.getSenderVpa().equalsIgnoreCase(wallet.getOwnerVpa())) {
+                    idempotency.release(packetHash);
+                    log.warn("Terminal transfer violation: sender {} is not wallet owner {}",
+                            instruction.getSenderVpa(), wallet.getOwnerVpa());
+                    return IngestResult.invalid(packetHash, "terminal_transfer_violation");
+                }
+
+                // 7.7 Verify cumulative amount bounds
+                if (instruction.getCumulativeAmount() != null
+                        && instruction.getCumulativeAmount().compareTo(wallet.getAllocatedAmount()) > 0) {
+                    idempotency.release(packetHash);
+                    log.warn("Cumulative spend ₹{} exceeds wallet allocation ₹{}",
+                            instruction.getCumulativeAmount(), wallet.getAllocatedAmount());
+                    return IngestResult.invalid(packetHash, "allocation_exceeded");
+                }
+            }
+
+            // ---- 8. Settle with retry ----
             Transaction tx;
             try {
                 tx = settlement.settle(instruction, packetHash, bridgeNodeId, hopCount);
@@ -179,8 +255,12 @@ public class BridgeIngestionService {
             idempotency.markCompleted(packetHash);
             if (tx.getStatus() == Transaction.Status.SETTLED) {
                 return IngestResult.settled(packetHash, tx);
+            } else if (tx.getStatus() == Transaction.Status.PENDING_SEQUENCE_GAP) {
+                return IngestResult.pendingGap(packetHash, tx);
+            } else if (tx.getStatus() == Transaction.Status.CONFLICTING) {
+                return IngestResult.conflicting(packetHash, tx, tx.getConflictReason());
             } else {
-                return IngestResult.rejected(packetHash, tx, "insufficient_balance");
+                return IngestResult.rejected(packetHash, tx, tx.getConflictReason() != null ? tx.getConflictReason() : "insufficient_balance");
             }
 
         } catch (Exception e) {
@@ -192,21 +272,27 @@ public class BridgeIngestionService {
         }
     }
 
-    public record IngestResult(String outcome, String packetHash, String reason, Long transactionId) {
+    public record IngestResult(String outcome, String packetHash, String reason, Long transactionId, String receiptSignature) {
         public static IngestResult settled(String hash, Transaction tx) {
-            return new IngestResult("SETTLED", hash, null, tx.getId());
+            return new IngestResult("SETTLED", hash, null, tx.getId(), tx.getReceiptSignature());
         }
         public static IngestResult duplicate(String hash) {
-            return new IngestResult("DUPLICATE_DROPPED", hash, null, null);
+            return new IngestResult("DUPLICATE_DROPPED", hash, null, null, null);
         }
         public static IngestResult invalid(String hash, String reason) {
-            return new IngestResult("INVALID", hash, reason, null);
+            return new IngestResult("INVALID", hash, reason, null, null);
         }
         public static IngestResult rejected(String hash, Transaction tx, String reason) {
-            return new IngestResult("REJECTED", hash, reason, tx != null ? tx.getId() : null);
+            return new IngestResult("REJECTED", hash, reason, tx != null ? tx.getId() : null, null);
+        }
+        public static IngestResult conflicting(String hash, Transaction tx, String reason) {
+            return new IngestResult("CONFLICTING", hash, reason, tx != null ? tx.getId() : null, null);
+        }
+        public static IngestResult pendingGap(String hash, Transaction tx) {
+            return new IngestResult("PENDING_SEQUENCE_GAP", hash, "missing_prior_sequence_counter", tx != null ? tx.getId() : null, null);
         }
         public static IngestResult transientFailure(String hash, String reason) {
-            return new IngestResult("TRANSIENT_FAILURE", hash, reason, null);
+            return new IngestResult("TRANSIENT_FAILURE", hash, reason, null, null);
         }
     }
 }

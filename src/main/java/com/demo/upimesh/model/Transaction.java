@@ -34,8 +34,8 @@ public class Transaction {
     @Column(nullable = false)
     private Instant signedAt; // When the sender originally signed it (offline)
 
-    @Column(nullable = false)
-    private Instant settledAt; // When the backend actually processed it
+    @Column(nullable = true)
+    private Instant settledAt; // When the backend actually processed it (null while PENDING_SEQUENCE_GAP)
 
     @Column(nullable = false)
     private String bridgeNodeId; // Which mesh node finally delivered it
@@ -47,7 +47,20 @@ public class Transaction {
     @Column(nullable = false)
     private Status status;
 
-    public enum Status { SETTLED, REJECTED }
+    @Column(length = 64)
+    private String walletId;
+
+    private Long sequenceCounter;
+
+    @Column(length = 128)
+    private String conflictReason;
+
+    private Long winningTransactionId;
+
+    @Column(length = 512)
+    private String receiptSignature;
+
+    public enum Status { SETTLED, REJECTED, CONFLICTING, PENDING_SEQUENCE_GAP }
 
     public Transaction() {}
 
@@ -80,4 +93,19 @@ public class Transaction {
 
     public Status getStatus() { return status; }
     public void setStatus(Status status) { this.status = status; }
+
+    public String getWalletId() { return walletId; }
+    public void setWalletId(String walletId) { this.walletId = walletId; }
+
+    public Long getSequenceCounter() { return sequenceCounter; }
+    public void setSequenceCounter(Long sequenceCounter) { this.sequenceCounter = sequenceCounter; }
+
+    public String getConflictReason() { return conflictReason; }
+    public void setConflictReason(String conflictReason) { this.conflictReason = conflictReason; }
+
+    public Long getWinningTransactionId() { return winningTransactionId; }
+    public void setWinningTransactionId(Long winningTransactionId) { this.winningTransactionId = winningTransactionId; }
+
+    public String getReceiptSignature() { return receiptSignature; }
+    public void setReceiptSignature(String receiptSignature) { this.receiptSignature = receiptSignature; }
 }

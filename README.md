@@ -248,6 +248,59 @@ See `BridgeIngestionService.java` for the freshness check.
 
 ---
 
+### Problem 4: Offline Spending & Double-Spending Mitigation (Phase 3)
+
+In pure offline mesh environments without server connectivity, an untrusted device could sign multiple conflicting spends exceeding its balance. Phase 3 implements an escrowed offline wallet architecture with bounded exposure, monotonic sequence progression, and server-side fork detection.
+
+#### Non-Negotiable Security Model
+- **No absolute prevention claim**: Software-only devices cannot provide absolute physical anti-cloning guarantees. We explicitly do NOT claim: *"Offline double spending is completely prevented."*
+- **The actual guarantees**:
+  1. **Identical replay** is prevented by Phase 2 authoritative packet hashing and database uniqueness.
+  2. **Offline authorized exposure** is strictly bounded by the server-signed escrow allocation (`OfflineWalletCertificate`).
+  3. **Conflicting offline spends** are detected during reconciliation via monotonic counter analysis.
+  4. **Conflicting wallet histories** are immediately frozen in `LOCKED_DISPUTED` state with auditable dispute records.
+  5. **Rollback-resistant protection**: Production grade protection against malicious rollback/cloning requires hardware-backed keys and monotonic state (Android StrongBox / eSE).
+
+#### Escrow Accounting Model
+Invariant:
+$$\text{Account Total Funds} = \text{Liquid Available Balance} + \text{Offline Locked Balance}$$
+
+- **Allocation**: When allocating ₹X to an offline wallet, ₹X is debited from liquid balance and credited to `offlineLockedBalance`. An `OfflineWallet` entity is created, and a server-signed `OfflineWalletCertificate` is issued.
+- **Settlement**: When an offline transaction arrives, ₹amount is subtracted from sender's `offlineLockedBalance` and credited to recipient's liquid balance. The sender's liquid balance is **never debited twice**.
+- **Reconciliation/Expiry**: Unused escrow ($\text{allocatedAmount} - \text{settledAmount}$) is automatically returned to the sender's liquid balance upon wallet closure.
+
+#### Server-Signed Offline Wallet Certificate
+The server signs an `OfflineWalletCertificate` using its Ed25519 issuer private key covering canonical string `v1_cert|walletId=...|ownerVpa=...|ownerPublicKey=...|allocatedAmount=...|walletEpoch=...|validFrom=...|validUntil=...|initialCounter=...`.
+During reconciliation, the backend cryptographically verifies:
+1. Issuer signature
+2. Certificate validity window
+3. Registered public key binding
+4. Wallet ownership
+5. Wallet epoch
+6. Allocation limit
+
+#### Monotonic Sequence State Machine & Fork Detection
+Transactions carry an incrementing `sequenceCounter`. During settlement:
+- **`counter == lastSettledCounter + 1` (In-Order)**:
+  - Debit escrow, credit receiver, advance `lastSettledCounter = counter`.
+  - Issue signed `SettlementReceipt`.
+  - Cascade-process any pending transactions waiting for sequence gap resolution.
+- **`counter > lastSettledCounter + 1` (Sequence Gap)**:
+  - Staged in `PENDING_SEQUENCE_GAP` status.
+  - Held up to configurable gap window (default 30 min). If window expires, marked `REJECTED_UNRESOLVED_SEQUENCE_GAP` and wallet marked `AUDIT_REQUIRED`.
+  - If a conflicting transaction with a different hash appears for the same gap counter, flags `CONFLICTING` (`conflicting_fork_in_sequence_gap`) and freezes the wallet.
+- **`counter <= lastSettledCounter` (Duplicate / Fork Analysis)**:
+  - If `packetHash == settledTx.packetHash`: Phase 2 duplicate recovery returns committed record.
+  - If `packetHash != settledTx.packetHash`: **Conflicting counter fork detected!** Marked `CONFLICTING` with reason `double_spend_counter_collision`, wallet frozen to `LOCKED_DISPUTED`, pending sequence gaps cancelled, and dispute record linked to winning transaction.
+  - **Authoritative Winner Policy**: *"Among conflicting transactions that reach the authoritative backend, the first valid transaction to commit is the settlement winner."*
+
+#### Epoch Semantics & Terminal Transfer Policy
+- Wallets use strictly increasing epochs ($E_1, E_2, \dots$); at most one ACTIVE epoch exists per wallet. Obsolete epoch transactions are rejected with `obsolete_wallet_epoch`.
+- **Terminal Transfer Policy**: Transfers are strictly $\text{Payer} \to \text{Payee} \to \text{Backend}$. Payees cannot re-spend received offline funds offline.
+
+#### Signed Settlement Receipt
+Upon successful settlement, the backend generates a `SettlementReceipt` signed by the server's Ed25519 issuer key over canonical representation `v1_receipt|txId=...|hash=...|counter=...|status=...|settledAt=...`, providing cryptographic proof of settlement to the recipient.
+
 ## File-by-file walkthrough
 
 ```
@@ -263,29 +316,34 @@ upi-offline-mesh/
         ├── UpiMeshApplication.java          Spring Boot main class
         │
         ├── model/                           ── Domain layer
-        │   ├── Account.java                 JPA entity. @Version = optimistic lock
+        │   ├── Account.java                 JPA entity. @Version = optimistic lock + offlineLockedBalance
         │   ├── AccountRepository.java       Spring Data JPA
-        │   ├── Transaction.java             Settled-tx ledger. unique idx on packetHash
-        │   ├── TransactionRepository.java   Spring Data JPA (findByPacketHash)
+        │   ├── OfflineWallet.java           JPA entity. Offline escrow allocation, epoch, counter, status
+        │   ├── OfflineWalletRepository.java Spring Data JPA (findByWalletId)
+        │   ├── OfflineWalletCertificate.java Server-signed offline spending capability certificate (record)
+        │   ├── SettlementReceipt.java       Server-signed cryptographic settlement receipt (record)
+        │   ├── Transaction.java             Settled-tx ledger. unique idx on packetHash, walletId, counter
+        │   ├── TransactionRepository.java   Spring Data JPA (findByPacketHash, findByWalletIdAndSequenceCounter)
         │   ├── MeshPacket.java              Wire format. Outer fields readable, ciphertext opaque
-        │   └── PaymentInstruction.java      Decrypted payload (sender/receiver/amount/nonce/time)
+        │   └── PaymentInstruction.java      Decrypted payload (sender/receiver/amount/nonce/time/walletId/counter/cert)
         │
         ├── crypto/                          ── Cryptography layer
-        │   ├── ServerKeyHolder.java         Generates RSA-2048 keypair on startup
+        │   ├── ServerKeyHolder.java         Generates RSA-2048 and Ed25519 issuer keypairs on startup
         │   ├── HybridCryptoService.java     RSA-OAEP + AES-256-GCM encrypt/decrypt + ciphertext hash
-        │   └── SignatureService.java        Ed25519 signing, verification, and canonical serialization
+        │   └── SignatureService.java        Ed25519 signing, verification, cert/receipt signing, canonical serialization
         │
         ├── service/                         ── Business logic
-        │   ├── DemoService.java             Seeds accounts, simulates a sender phone (with Ed25519 keys)
-        │   ├── VirtualDevice.java           One simulated phone in the mesh
+        │   ├── DemoService.java             Seeds accounts, simulates phone creation of online & offline packets
+        │   ├── VirtualDevice.java           One simulated phone in the mesh (tracks monotonic counter & certificate)
         │   ├── MeshSimulatorService.java    Gossip protocol across virtual devices
+        │   ├── OfflineWalletService.java    Escrow allocation, certificate issuance, and wallet reconciliation
         │   ├── IdempotencyService.java      In-flight concurrency gate (tryAcquire/release)
-        │   ├── SettlementService.java       Fresh-transaction optimistic-lock retry & ledger updates
+        │   ├── SettlementService.java       Fresh-transaction optimistic-lock retry, offline sequence state machine & fork detection
         │   ├── TransientSettlementException.java Dedicated exception on retry exhaustion
-        │   └── BridgeIngestionService.java  THE pipeline: DB lookup → tryAcquire → decrypt → freshness → verify sig → settle
+        │   └── BridgeIngestionService.java  THE pipeline: DB lookup → tryAcquire → decrypt → freshness → verify sig → cert check → settle
         │
         ├── controller/                      ── HTTP layer
-        │   ├── ApiController.java           All REST endpoints
+        │   ├── ApiController.java           All REST endpoints (/api/wallet/allocate, /api/bridge/ingest, etc.)
         │   └── DashboardController.java     Serves the dashboard HTML at /
         │
         └── config/
@@ -295,6 +353,7 @@ src/test/java/com/demo/upimesh/
 ├── CryptographicIdentityTest.java           Sender identity & authorization verification integration tests
 ├── IdempotencyConcurrencyTest.java          The 3-bridges-at-once test + tamper test
 ├── ReliableIdempotencyTest.java             13 Phase 2 reliability, retry, lost-response, and concurrency tests
+├── OfflineWalletReliabilityTest.java        20 Phase 3 offline escrow, sequence gaps, fork detection & receipt tests
 └── crypto/
     └── SignatureServiceTest.java            Ed25519 unit tests & canonicalization determinism tests
 ```
@@ -377,22 +436,30 @@ This is a teaching demo. To make it production-grade you'd swap these things:
 | One settlement service that owns the ledger | Integration with NPCI / a real bank core |
 | No auth on `/api/bridge/ingest` | Mutual TLS or signed bridge-node certificates |
 | In-memory accounts seeded on startup | Real KYC'd users, real VPAs, real PIN verification against the bank |
+| In-memory simulated device monotonic counter | Hardware-backed monotonic counter (e.g. Android StrongBox / eSE) |
+| Software-signed wallet certificate | Hardware Attestation + CA-backed certificate chain |
 | H2 console exposed | Disabled |
 | No rate limiting | Per-bridge-node rate limit, per-sender velocity check |
 | Logs to console | Structured logs to a SIEM, alerts on `INVALID` spikes |
 
-The cryptography and idempotency code is essentially production-shaped. The infrastructure around it is what changes.
+The cryptography, idempotency, and offline escrow state machine code is essentially production-shaped. The hardware isolation and distributed infrastructure around it is what changes.
 
 ---
 
-## Honest limitations of the concept
+## Honest limitations of the concept & Software vs Hardware Boundary
 
-I want this README to be useful to you when someone reviews the project, so let's be straight about what this design **does not** solve. These are not implementation bugs — they're inherent to "no internet, anywhere in the chain":
+Let's be completely transparent about the security boundary:
 
-1. **The receiver has no way to verify the sender has the funds.** When sender hands receiver a phone showing "₹500 sent," it's an IOU, not a settled payment. If the sender's account is empty when the packet finally reaches the backend, the settlement will be `REJECTED` and the receiver is out ₹500 with no recourse. *This is why real offline UPI (UPI Lite) uses a pre-funded hardware-backed wallet* — to give cryptographic proof of available funds offline.
-2. **A malicious sender can double-spend offline.** With ₹500 in their account, they could send a packet to Bob in basement A, walk to basement B, and send another ₹500 to Carol. Whichever packet hits the backend first wins; the other gets `REJECTED`. Same root cause as #1.
-3. **Bluetooth in real life is hard.** Background BLE on Android is heavily throttled since Android 8. iOS peripheral mode is locked down. Two strangers' phones reliably forming a GATT connection while the apps aren't actively open is genuinely difficult and a lot of energy. This demo skips that problem entirely by simulating the mesh.
-4. **Privacy / liability.** A stranger carries your encrypted transaction packet on their phone. They can't read it, but its existence is metadata. In a real deployment you'd want to think about regulatory disclosures and what happens if a device is seized.
+1. **Software vs Hardware Boundary (Anti-Cloning)**:
+   - In this prototype, devices and sequence counters are simulated in software. A software-only implementation running on an untrusted device **cannot provide absolute physical anti-cloning guarantees**. If an attacker clones the application memory or performs a VM snapshot rollback, they could produce two validly signed transactions sharing the same sequence counter before syncing.
+   - **Production Requirement**: Real-world rollback resistance and anti-cloning require **hardware-backed non-exportable private keys and monotonic counters** provided by secure elements (such as Android StrongBox Keymaster, Embedded Secure Element (eSE), or Apple Secure Enclave) combined with remote hardware attestation.
+2. **Detection vs Prevention**:
+   - Monotonic sequence checks and escrow accounting strictly **bound the issuer's authorized exposure** to the pre-funded escrow amount.
+   - Conflicting offline spends cannot be prevented at the offline peer if the device is cloned; instead, **conflicts are detected with mathematical certainty during reconciliation**, freezing the wallet into `LOCKED_DISPUTED` and creating an auditable dispute record.
+3. **Bluetooth in real life is hard**:
+   - Background BLE on Android is heavily throttled since Android 8. iOS peripheral mode is locked down. Two strangers' phones reliably forming a GATT connection while the apps aren't actively open is genuinely difficult and energy intensive. This prototype simulates the mesh layer.
+4. **Terminal transfer restriction**:
+   - Offline funds cannot be recursively re-spent across arbitrary peer chains without global consensus or hardware-enforced token transfer. Transfers are strictly terminal: Payer $\to$ Payee $\to$ Backend.
 
 For a college / portfolio project: name the concept honestly as **"mesh-routed deferred settlement"** rather than "real-time offline UPI," and you'll have a much stronger pitch. The cryptography and idempotency work here is real engineering and worth showing off.
 

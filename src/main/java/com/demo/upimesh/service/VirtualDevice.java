@@ -18,6 +18,13 @@ public class VirtualDevice {
     private final boolean hasInternet;
     private final Map<String, MeshPacket> heldPackets = new ConcurrentHashMap<>();
 
+    // Simulated offline wallet state (simulation of device-secure monotonic state; in-memory software only)
+    private String walletId;
+    private Long walletEpoch;
+    private long sequenceCounter = 0L;
+    private java.math.BigDecimal cumulativeSpend = java.math.BigDecimal.ZERO;
+    private com.demo.upimesh.model.OfflineWalletCertificate certificate;
+
     public VirtualDevice(String deviceId, boolean hasInternet) {
         this.deviceId = deviceId;
         this.hasInternet = hasInternet;
@@ -45,4 +52,28 @@ public class VirtualDevice {
     public void clear() {
         heldPackets.clear();
     }
+
+    public void loadWalletCertificate(com.demo.upimesh.model.OfflineWalletCertificate cert) {
+        this.walletId = cert.walletId();
+        this.walletEpoch = cert.walletEpoch();
+        this.sequenceCounter = cert.initialCounter();
+        this.cumulativeSpend = java.math.BigDecimal.ZERO;
+        this.certificate = cert;
+    }
+
+    public synchronized long nextSequenceCounter() {
+        this.sequenceCounter++;
+        return this.sequenceCounter;
+    }
+
+    public synchronized void recordSpend(java.math.BigDecimal amount) {
+        this.cumulativeSpend = this.cumulativeSpend.add(amount);
+    }
+
+    public String getWalletId() { return walletId; }
+    public Long getWalletEpoch() { return walletEpoch; }
+    public long getSequenceCounter() { return sequenceCounter; }
+    public void setSequenceCounter(long counter) { this.sequenceCounter = counter; }
+    public java.math.BigDecimal getCumulativeSpend() { return cumulativeSpend; }
+    public com.demo.upimesh.model.OfflineWalletCertificate getCertificate() { return certificate; }
 }

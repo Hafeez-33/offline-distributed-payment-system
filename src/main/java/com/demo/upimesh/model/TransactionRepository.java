@@ -9,4 +9,7 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     List<Transaction> findTop20ByOrderByIdDesc();
     boolean existsByPacketHash(String packetHash);
     Optional<Transaction> findByPacketHash(String packetHash);
+    Optional<Transaction> findByWalletIdAndSequenceCounter(String walletId, Long sequenceCounter);
+    List<Transaction> findByWalletIdAndStatus(String walletId, Transaction.Status status);
+    List<Transaction> findByWalletIdOrderBySequenceCounterAsc(String walletId);
 }
