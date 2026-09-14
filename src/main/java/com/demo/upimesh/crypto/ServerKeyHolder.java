@@ -27,6 +27,7 @@ public class ServerKeyHolder {
     private static final Logger log = LoggerFactory.getLogger(ServerKeyHolder.class);
 
     private KeyPair keyPair;
+    private KeyPair issuerKeyPair;
 
     @PostConstruct
     public void init() throws Exception {
@@ -35,6 +36,11 @@ public class ServerKeyHolder {
         this.keyPair = gen.generateKeyPair();
         log.info("Server RSA keypair generated (2048-bit). Public key fingerprint: {}",
                 getPublicKeyBase64().substring(0, 32) + "...");
+
+        KeyPairGenerator edGen = KeyPairGenerator.getInstance("Ed25519");
+        this.issuerKeyPair = edGen.generateKeyPair();
+        log.info("Server Ed25519 issuer keypair generated. Public key fingerprint: {}",
+                getIssuerPublicKeyBase64().substring(0, 32) + "...");
     }
 
     public PublicKey getPublicKey() {
@@ -47,5 +53,17 @@ public class ServerKeyHolder {
 
     public String getPublicKeyBase64() {
         return Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
+    }
+
+    public PublicKey getIssuerPublicKey() {
+        return issuerKeyPair.getPublic();
+    }
+
+    public PrivateKey getIssuerPrivateKey() {
+        return issuerKeyPair.getPrivate();
+    }
+
+    public String getIssuerPublicKeyBase64() {
+        return Base64.getEncoder().encodeToString(issuerKeyPair.getPublic().getEncoded());
     }
 }

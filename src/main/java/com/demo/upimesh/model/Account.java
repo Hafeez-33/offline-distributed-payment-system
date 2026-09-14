@@ -19,7 +19,16 @@ public class Account {
     private String holderName;
 
     @Column(nullable = false, precision = 19, scale = 2)
-    private BigDecimal balance;
+    private BigDecimal balance; // Liquid funds available for online transfers
+
+    @Column(nullable = false, precision = 19, scale = 2)
+    private BigDecimal offlineLockedBalance = BigDecimal.ZERO; // Escrowed funds reserved for offline wallet(s)
+
+    @Column(nullable = false, length = 128)
+    private String publicKey; // Base64-encoded X.509 SubjectPublicKeyInfo (Ed25519)
+
+    @Column(nullable = false, length = 16)
+    private String keyAlgorithm; // "Ed25519"
 
     @Version  // Optimistic locking — prevents lost updates on concurrent transfers
     private Long version;
@@ -27,9 +36,29 @@ public class Account {
     public Account() {}
 
     public Account(String vpa, String holderName, BigDecimal balance) {
+        this(vpa, holderName, balance, null, "Ed25519");
+    }
+
+    public Account(String vpa, String holderName, BigDecimal balance, String publicKey, String keyAlgorithm) {
         this.vpa = vpa;
         this.holderName = holderName;
         this.balance = balance;
+        this.offlineLockedBalance = BigDecimal.ZERO;
+        this.publicKey = publicKey;
+        this.keyAlgorithm = keyAlgorithm;
+    }
+
+    public BigDecimal getTotalFunds() {
+        return (balance != null ? balance : BigDecimal.ZERO)
+                .add(offlineLockedBalance != null ? offlineLockedBalance : BigDecimal.ZERO);
+    }
+
+    public BigDecimal getOfflineLockedBalance() {
+        return offlineLockedBalance != null ? offlineLockedBalance : BigDecimal.ZERO;
+    }
+
+    public void setOfflineLockedBalance(BigDecimal offlineLockedBalance) {
+        this.offlineLockedBalance = offlineLockedBalance != null ? offlineLockedBalance : BigDecimal.ZERO;
     }
 
     public String getVpa() { return vpa; }
@@ -40,6 +69,12 @@ public class Account {
 
     public BigDecimal getBalance() { return balance; }
     public void setBalance(BigDecimal balance) { this.balance = balance; }
+
+    public String getPublicKey() { return publicKey; }
+    public void setPublicKey(String publicKey) { this.publicKey = publicKey; }
+
+    public String getKeyAlgorithm() { return keyAlgorithm; }
+    public void setKeyAlgorithm(String keyAlgorithm) { this.keyAlgorithm = keyAlgorithm; }
 
     public Long getVersion() { return version; }
     public void setVersion(Long version) { this.version = version; }

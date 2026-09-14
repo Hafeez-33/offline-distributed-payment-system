@@ -30,6 +30,7 @@ public class ApiController {
     @Autowired private AccountRepository accountRepo;
     @Autowired private TransactionRepository txRepo;
     @Autowired private IdempotencyService idempotency;
+    @Autowired private OfflineWalletService walletService;
 
     // ------------------------------------------------------------------ key
 
@@ -37,9 +38,44 @@ public class ApiController {
     public Map<String, String> getServerPublicKey() {
         return Map.of(
                 "publicKey", serverKey.getPublicKeyBase64(),
-                "algorithm", "RSA-2048 / OAEP-SHA256",
+                "issuerPublicKey", serverKey.getIssuerPublicKeyBase64(),
+                "algorithm", "RSA-2048 / OAEP-SHA256 & Ed25519",
                 "hybridScheme", "RSA-OAEP encrypts an AES-256-GCM session key"
         );
+    }
+
+    // --------------------------------------------------------------- wallet
+
+    @PostMapping("/wallet/allocate")
+    public ResponseEntity<?> allocateWallet(@RequestBody WalletAllocateRequest req) {
+        long durationHours = req.durationHours != null ? req.durationHours : 24L;
+        OfflineWalletService.AllocationResult res = walletService.allocate(req.ownerVpa, req.amount, durationHours);
+        return ResponseEntity.ok(Map.of(
+                "walletId", res.wallet().getWalletId(),
+                "ownerVpa", res.wallet().getOwnerVpa(),
+                "allocatedAmount", res.wallet().getAllocatedAmount(),
+                "walletEpoch", res.wallet().getWalletEpoch(),
+                "validUntil", res.wallet().getValidUntil().toEpochMilli(),
+                "certificate", res.certificate()
+        ));
+    }
+
+    @PostMapping("/wallet/reconcile")
+    public ResponseEntity<?> reconcileWallet(@RequestBody Map<String, String> req) {
+        String walletId = req.get("walletId");
+        OfflineWallet wallet = walletService.reconcileAndClose(walletId);
+        return ResponseEntity.ok(Map.of(
+                "walletId", wallet.getWalletId(),
+                "status", wallet.getStatus().name(),
+                "settledAmount", wallet.getSettledAmount(),
+                "remainingAmount", wallet.getRemainingAmount()
+        ));
+    }
+
+    public static class WalletAllocateRequest {
+        public String ownerVpa;
+        public BigDecimal amount;
+        public Long durationHours;
     }
 
     // ---------------------------------------------------------------- demo
@@ -143,6 +179,60 @@ public class ApiController {
         mesh.resetMesh();
         idempotency.clear();
         return Map.of("status", "mesh and idempotency cache cleared");
+    }
+
+    @PostMapping("/mesh/sync")
+    public ResponseEntity<?> meshSync() {
+        MeshSimulatorService.AntiEntropySyncResult r = mesh.syncAntiEntropy();
+        return ResponseEntity.ok(Map.of(
+                "totalTransfers", r.totalTransfers(),
+                "sessionsInSync", r.sessionsInSync(),
+                "sessionsRepaired", r.sessionsRepaired(),
+                "deviceCounts", r.deviceCounts(),
+                "allReachableConverged", r.allReachableConverged(),
+                "digests", mesh.digestMap()
+        ));
+    }
+
+    @PostMapping("/mesh/partition")
+    public ResponseEntity<?> meshPartition(@RequestBody(required = false) PartitionRequest req) {
+        if (req != null) {
+            if (req.nodeA != null && req.nodeB != null) {
+                mesh.severLink(req.nodeA, req.nodeB);
+            }
+            if (req.submeshA != null && req.submeshB != null) {
+                mesh.partitionSubmeshes(req.submeshA, req.submeshB);
+            }
+        }
+        return ResponseEntity.ok(Map.of(
+                "status", "partition_applied",
+                "severedLinks", mesh.getSeveredLinks()
+        ));
+    }
+
+    @PostMapping("/mesh/heal")
+    public ResponseEntity<?> meshHeal(@RequestBody(required = false) HealRequest req) {
+        if (req != null && req.nodeA != null && req.nodeB != null) {
+            mesh.healLink(req.nodeA, req.nodeB);
+        } else {
+            mesh.healAll();
+        }
+        return ResponseEntity.ok(Map.of(
+                "status", "links_healed",
+                "severedLinks", mesh.getSeveredLinks()
+        ));
+    }
+
+    public static class PartitionRequest {
+        public String nodeA;
+        public String nodeB;
+        public List<String> submeshA;
+        public List<String> submeshB;
+    }
+
+    public static class HealRequest {
+        public String nodeA;
+        public String nodeB;
     }
 
     // -------------------------------------------------------------- bridge
