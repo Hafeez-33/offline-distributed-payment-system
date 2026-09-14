@@ -703,82 +703,85 @@ Total Test Suite: 56 tests run, 0 failures, 0 errors.
 
 ## Objective
 
-Transform the basic simulated gossip into a more realistic synchronization protocol.
+Transform the basic simulated gossip into a robust hybrid distributed synchronization protocol supporting epidemic push, pairwise anti-entropy pull, deterministic state digests, partition resilience, and mathematical convergence.
 
-### Current
+### Implemented Architecture & Guarantees
 
-```text
-Broadcast packet
-      ↓
-TTL decrement
-      ↓
-Forward
-```
+1. **Authoritative Identity vs Transport Identifier**:
+   - `packetHash = SHA-256(ciphertext)` is the authoritative cryptographic identity used for deduplication, state digests, bucket checksums, and sync requests.
+   - `packetId` (UUID) serves strictly as an outer transport/message identifier.
 
-### Target
+2. **State Digest & Prefix-Bucket Slicing**:
+   - Empty state: `stateDigest = SHA-256("EMPTY")`.
+   - Populated state: full `packetHash` values are sorted lexicographically and hashed.
+   - Equal SHA-256 state digests provide cryptographically strong practical equality with negligible collision probability ($\approx 2^{-256}$).
+   - 16-bucket prefix checksum array groups packets by the first hex character (`0`–`f`) of their authoritative `packetHash`.
 
-```text
-Peer Discovery
-      ↓
-State Digest
-      ↓
-Compare Knowledge
-      ↓
-Request Missing Transactions
-      ↓
-Transfer Missing Data
-      ↓
-Verify
-      ↓
-Merge
-```
+3. **Hybrid Push-Pull Protocol**:
+   - **Epidemic Push**: Low-latency hop-by-hop forwarding decrements TTL. TTL strictly limits push broadcast radius.
+   - **Anti-Entropy Pull**: Pairwise background synchronization operates independently of push TTL. TTL never blocks anti-entropy repair.
 
-### Build
+4. **Deterministic Anti-Entropy Sequence**:
+   ```text
+   STATE_SUMMARY
+        ↓
+   Compare root digest (O(1) summary exit on match)
+        ↓
+   Compare 16 prefix bucket checksums
+        ↓
+   Exchange full authoritative packet hashes for divergent buckets
+        ↓
+   Compute symmetric differences (missingFromPeer / missingFromSelf)
+        ↓
+   SYNC_REQUEST (bounded max 50 packets per batch)
+        ↓
+   SYNC_RESPONSE
+        ↓
+   SYNC_ACK (certifies pairwise completion)
+   ```
 
-#### 4.1 Peer state
+5. **Failure & Partition Resilience**:
+   - Simulated network link severing and submesh partitioning (`/api/mesh/partition`).
+   - Healing (`/api/mesh/heal`) reconnects links and triggers mutual bi-directional anti-entropy reconciliation.
+   - Alternate-peer selection: If a target peer times out or fails, the node aborts the session, marks the peer `DEGRADED`, and selects an alternate reachable neighbor.
+   - Volatile restart: Restarting a simulator mesh node wipes its ephemeral in-memory buffer; it re-syncs all packets from peers without altering or reconstructing authoritative backend financial balances.
 
-Each node tracks what transactions it knows.
+6. **Preservation of Phase 3 Double-Spending Invariants**:
+   - Conflicting offline wallet transactions (same wallet ID and counter, different ciphertexts) both propagate through the mesh.
+   - The mesh never discards either transaction as a conflict.
+   - Phase 3 backend settlement remains the sole authoritative arbiter for conflict detection and freezing disputed wallets.
 
-#### 4.2 Anti-entropy
+7. **Explicit Non-Goals**:
+   - No linearizability or strong synchronous consistency (mesh is eventually consistent).
+   - No global total transaction ordering (ordering is causal per wallet and authoritative at backend).
+   - No real BLE/radio guarantees (software protocol simulation).
+   - No production database migration (remains in-memory simulator; PostgreSQL/Redis deferred to Phase 7).
+   - No hardware wallet guarantees (hardware-backed anti-cloning deferred to Phase 9).
 
-Nodes periodically exchange summaries.
+### Tests and Results
 
-#### 4.3 Merkle trees
+Automated test suite implemented in `AdvancedGossipSyncTest.java` (15 test cases):
+1. `identicalPeersProduceImmediateDigestMatchWithoutTransfers` — PASS
+2. `singleMissingPacketRepairedViaAntiEntropy` — PASS
+3. `biDirectionalMissingPacketsRepairedSimultaneously` — PASS
+4. `duplicateSyncMessageSuppression` — PASS
+5. `packetLossRecoveredBySubsequentAntiEntropy` — PASS
+6. `delayedSyncResponseHandledWithoutDeadlock` — PASS
+7. `alternatePeerSelectedWhenSyncTargetTimesOut` — PASS
+8. `nodeRestartReSyncsBufferFromPeersWithoutAlteringBackend` — PASS
+9. `networkPartitionMaintainsSubMeshConsistency` — PASS
+10. `partitionHealTriggersCompleteBiDirectionalConvergence` — PASS
+11. `concurrentTransactionsDuringPartitionSynchronizeOnHeal` — PASS
+12. `prefixBucketDigestPinpointsDivergentSlices` — PASS
+13. `mathematicalConvergenceAchievedAcrossAllDevices` — PASS
+14. `ttlExhaustionDoesNotPreventAntiEntropyRepair` — PASS
+15. `largeBatchSynchronizationRespectsPagingLimits` — PASS
 
-Use Merkle trees to efficiently identify divergent transaction sets.
-
-```text
-             Root
-            /    \
-          H1      H2
-         /  \    /  \
-       TX1 TX2 TX3 TX4
-```
-
-#### 4.4 Vector clocks
-
-Track causal relationships between distributed events.
-
-Example:
-
-```text
-Node A: [4,2,1]
-Node B: [3,5,1]
-Node C: [3,2,7]
-```
-
-#### 4.5 Conflict detection
-
-Identify:
-
-* Duplicate transactions
-* Concurrent transactions
-* Conflicting state
-* Double-spend attempts
+Total Project Test Suite: 71 tests run, 0 failures, 0 errors.
 
 ### Status
 
-**NOT STARTED**
+**COMPLETED**
 
 ---
 

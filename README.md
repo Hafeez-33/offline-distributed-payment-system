@@ -301,6 +301,57 @@ Transactions carry an incrementing `sequenceCounter`. During settlement:
 #### Signed Settlement Receipt
 Upon successful settlement, the backend generates a `SettlementReceipt` signed by the server's Ed25519 issuer key over canonical representation `v1_receipt|txId=...|hash=...|counter=...|status=...|settledAt=...`, providing cryptographic proof of settlement to the recipient.
 
+---
+
+### Problem 5: Advanced Gossip & Distributed Synchronization (Phase 4)
+
+Pure broadcast gossip suffers from redundant message storms, permanent packet drops when TTL expires, and an inability to reconcile partitioned mesh networks upon reconnection. Phase 4 implements a hybrid synchronization protocol combining rapid epidemic push with deterministic anti-entropy pull.
+
+#### 1. Authoritative Content Identity vs Outer Transport Header
+- **`packetHash = SHA-256(ciphertext)`**: The cryptographic content identity used exclusively for deduplication, state digests, prefix bucket checksums, and sync requests.
+- **`packetId`**: An unauthenticated transport UUID used only for diagnostic logging and outer hop tracing.
+
+#### 2. Deterministic State Digest & 16-Bucket Prefix Slicing
+- **Empty State**: `stateDigest = SHA-256("EMPTY")`.
+- **Populated State**: Lexicographically sorted `packetHash`es are hashed together with SHA-256. Equal digests provide cryptographically strong practical equality with negligible collision probability ($\approx 2^{-256}$).
+- **16 Prefix Buckets**: Hashes are partitioned by their first hex character (`0`–`f`). When digests diverge, nodes compare bucket checksums to pinpoint exact divergent slices without transferring unaffected items.
+
+#### 3. Anti-Entropy Protocol Sequence
+When peers synchronize:
+```text
+STATE_SUMMARY (digest & bucket checksums)
+     ↓
+Compare root digest (O(1) summary exit on match)
+     ↓
+Compare 16 prefix bucket checksums
+     ↓
+BUCKET_HASH_EXCHANGE (authoritative full hashes for divergent buckets)
+     ↓
+Compute symmetric set differences (missingFromPeer / missingFromSelf)
+     ↓
+SYNC_REQUEST (batches of up to 50 packets)
+     ↓
+SYNC_RESPONSE (MeshPacket payloads)
+     ↓
+SYNC_ACK (certifies pairwise sync completion)
+```
+
+#### 4. Partition Resilience & Self-Healing
+- **Partition Isolation**: Links or submeshes can be severed via `/api/mesh/partition`. Partitioned submeshes operate independently and achieve local consistency.
+- **Bi-Directional Healing**: When links are restored via `/api/mesh/heal`, anti-entropy exchanges detect divergence and mutually stream missing transactions across the healed boundary.
+- **Alternate-Peer Selection**: If a target peer times out or fails, the node aborts the session, marks the peer `DEGRADED`, and falls back to an alternate reachable neighbor.
+- **TTL vs Anti-Entropy Independence**: TTL limits initial push broadcast radius. **TTL never blocks anti-entropy repair**; anti-entropy synchronizes packets even if their push TTL has expired.
+
+#### 5. Preservation of Phase 3 Double-Spending Rules
+Conflicting offline wallet transactions (e.g. same wallet ID and counter with differing nonces) are **never** discarded by mesh nodes. Both packets synchronize through the mesh to the bridge so the authoritative Phase 3 backend can detect the collision, flag `double_spend_counter_collision`, and freeze the wallet into `LOCKED_DISPUTED`.
+
+#### 6. Explicit Distributed Systems Non-Goals
+- **No Linearizability / Global Strong Consistency**: Convergence is eventual across connected components.
+- **No Global Transaction Ordering**: Transactions from different senders are concurrent; strict monotonic order is enforced per wallet.
+- **No Physical BLE / Hardware Guarantees**: This is an in-memory Java simulator; BLE MTU constraints and hardware secure enclaves are deferred to Phase 9.
+
+---
+
 ## File-by-file walkthrough
 
 ```
@@ -324,8 +375,18 @@ upi-offline-mesh/
         │   ├── SettlementReceipt.java       Server-signed cryptographic settlement receipt (record)
         │   ├── Transaction.java             Settled-tx ledger. unique idx on packetHash, walletId, counter
         │   ├── TransactionRepository.java   Spring Data JPA (findByPacketHash, findByWalletIdAndSequenceCounter)
-        │   ├── MeshPacket.java              Wire format. Outer fields readable, ciphertext opaque
-        │   └── PaymentInstruction.java      Decrypted payload (sender/receiver/amount/nonce/time/walletId/counter/cert)
+        │   ├── MeshPacket.java              Wire format. Outer fields readable, ciphertext opaque + getPacketHash()
+        │   ├── PaymentInstruction.java      Decrypted payload (sender/receiver/amount/nonce/time/walletId/counter/cert)
+        │   └── sync/                        ── Phase 4 Synchronization models
+        │       ├── MeshSyncMessage.java     Sealed interface for typed sync message hierarchy
+        │       ├── HelloMessage.java        Peer discovery and heartbeat record
+        │       ├── StateSummaryMessage.java State digest and 16 prefix bucket checksums record
+        │       ├── BucketHashExchangeMessage.java Full authoritative packet hashes for divergent bucket record
+        │       ├── SyncRequestMessage.java  Bounded batch pull request record
+        │       ├── SyncResponseMessage.java Payload delivery record
+        │       ├── SyncAckMessage.java      Pairwise synchronization completion acknowledgment record
+        │       ├── PacketSyncMeta.java      Stored packet synchronization metadata record
+        │       └── PeerSyncRecord.java      Neighbor synchronization tracking class
         │
         ├── crypto/                          ── Cryptography layer
         │   ├── ServerKeyHolder.java         Generates RSA-2048 and Ed25519 issuer keypairs on startup
@@ -334,8 +395,9 @@ upi-offline-mesh/
         │
         ├── service/                         ── Business logic
         │   ├── DemoService.java             Seeds accounts, simulates phone creation of online & offline packets
-        │   ├── VirtualDevice.java           One simulated phone in the mesh (tracks monotonic counter & certificate)
-        │   ├── MeshSimulatorService.java    Gossip protocol across virtual devices
+        │   ├── VirtualDevice.java           Phone in mesh. packetHash store, state digest, 16 buckets, wallet state
+        │   ├── AntiEntropyService.java      Pairwise anti-entropy reconciliation engine with fallback
+        │   ├── MeshSimulatorService.java    Hybrid push-pull coordinator with partition/heal topology controls
         │   ├── OfflineWalletService.java    Escrow allocation, certificate issuance, and wallet reconciliation
         │   ├── IdempotencyService.java      In-flight concurrency gate (tryAcquire/release)
         │   ├── SettlementService.java       Fresh-transaction optimistic-lock retry, offline sequence state machine & fork detection
@@ -343,7 +405,7 @@ upi-offline-mesh/
         │   └── BridgeIngestionService.java  THE pipeline: DB lookup → tryAcquire → decrypt → freshness → verify sig → cert check → settle
         │
         ├── controller/                      ── HTTP layer
-        │   ├── ApiController.java           All REST endpoints (/api/wallet/allocate, /api/bridge/ingest, etc.)
+        │   ├── ApiController.java           All REST endpoints (/api/mesh/sync, /api/mesh/partition, etc.)
         │   └── DashboardController.java     Serves the dashboard HTML at /
         │
         └── config/
@@ -354,6 +416,7 @@ src/test/java/com/demo/upimesh/
 ├── IdempotencyConcurrencyTest.java          The 3-bridges-at-once test + tamper test
 ├── ReliableIdempotencyTest.java             13 Phase 2 reliability, retry, lost-response, and concurrency tests
 ├── OfflineWalletReliabilityTest.java        20 Phase 3 offline escrow, sequence gaps, fork detection & receipt tests
+├── AdvancedGossipSyncTest.java              15 Phase 4 anti-entropy, state digest, partition & convergence tests
 └── crypto/
     └── SignatureServiceTest.java            Ed25519 unit tests & canonicalization determinism tests
 ```
@@ -368,9 +431,12 @@ src/test/java/com/demo/upimesh/
 | GET | `/api/server-key` | Server's RSA public key (base64) |
 | GET | `/api/accounts` | All accounts and balances |
 | GET | `/api/transactions` | Last 20 transactions |
-| GET | `/api/mesh/state` | Current state of every virtual device |
+| GET | `/api/mesh/state` | Current state of every virtual device, digests, and severed links |
 | POST | `/api/demo/send` | Simulate sender phone — encrypt + inject packet |
-| POST | `/api/mesh/gossip` | Run one round of gossip across the mesh |
+| POST | `/api/mesh/gossip` | Run one round of epidemic push gossip across the mesh |
+| POST | `/api/mesh/sync` | **Phase 4:** Run pairwise anti-entropy synchronization across reachable peers |
+| POST | `/api/mesh/partition` | **Phase 4:** Sever specific links or create submesh partitions |
+| POST | `/api/mesh/heal` | **Phase 4:** Heal specific link or all partitioned mesh links |
 | POST | `/api/mesh/flush` | Bridges with internet upload to backend (parallel) |
 | POST | `/api/mesh/reset` | Clear mesh + idempotency cache |
 | POST | `/api/bridge/ingest` | **The production endpoint.** Real bridges POST here |

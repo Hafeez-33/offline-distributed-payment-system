@@ -181,6 +181,60 @@ public class ApiController {
         return Map.of("status", "mesh and idempotency cache cleared");
     }
 
+    @PostMapping("/mesh/sync")
+    public ResponseEntity<?> meshSync() {
+        MeshSimulatorService.AntiEntropySyncResult r = mesh.syncAntiEntropy();
+        return ResponseEntity.ok(Map.of(
+                "totalTransfers", r.totalTransfers(),
+                "sessionsInSync", r.sessionsInSync(),
+                "sessionsRepaired", r.sessionsRepaired(),
+                "deviceCounts", r.deviceCounts(),
+                "allReachableConverged", r.allReachableConverged(),
+                "digests", mesh.digestMap()
+        ));
+    }
+
+    @PostMapping("/mesh/partition")
+    public ResponseEntity<?> meshPartition(@RequestBody(required = false) PartitionRequest req) {
+        if (req != null) {
+            if (req.nodeA != null && req.nodeB != null) {
+                mesh.severLink(req.nodeA, req.nodeB);
+            }
+            if (req.submeshA != null && req.submeshB != null) {
+                mesh.partitionSubmeshes(req.submeshA, req.submeshB);
+            }
+        }
+        return ResponseEntity.ok(Map.of(
+                "status", "partition_applied",
+                "severedLinks", mesh.getSeveredLinks()
+        ));
+    }
+
+    @PostMapping("/mesh/heal")
+    public ResponseEntity<?> meshHeal(@RequestBody(required = false) HealRequest req) {
+        if (req != null && req.nodeA != null && req.nodeB != null) {
+            mesh.healLink(req.nodeA, req.nodeB);
+        } else {
+            mesh.healAll();
+        }
+        return ResponseEntity.ok(Map.of(
+                "status", "links_healed",
+                "severedLinks", mesh.getSeveredLinks()
+        ));
+    }
+
+    public static class PartitionRequest {
+        public String nodeA;
+        public String nodeB;
+        public List<String> submeshA;
+        public List<String> submeshB;
+    }
+
+    public static class HealRequest {
+        public String nodeA;
+        public String nodeB;
+    }
+
     // -------------------------------------------------------------- bridge
 
     /**
