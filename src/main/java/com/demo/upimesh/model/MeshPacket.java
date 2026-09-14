@@ -44,4 +44,23 @@ public class MeshPacket {
 
     public String getCiphertext() { return ciphertext; }
     public void setCiphertext(String ciphertext) { this.ciphertext = ciphertext; }
+
+    /**
+     * Authoritative cryptographic content identity: SHA-256(ciphertext).
+     * Used for mesh deduplication, state digests, and anti-entropy synchronization.
+     */
+    public String getPacketHash() {
+        if (ciphertext == null) return null;
+        try {
+            java.security.MessageDigest sha256 = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = sha256.digest(ciphertext.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            throw new RuntimeException("SHA-256 not available", e);
+        }
+    }
 }

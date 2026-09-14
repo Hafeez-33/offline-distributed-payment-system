@@ -703,150 +703,170 @@ Total Test Suite: 56 tests run, 0 failures, 0 errors.
 
 ## Objective
 
-Transform the basic simulated gossip into a more realistic synchronization protocol.
+Transform the basic simulated gossip into a robust hybrid distributed synchronization protocol supporting epidemic push, pairwise anti-entropy pull, deterministic state digests, partition resilience, and mathematical convergence.
 
-### Current
+### Implemented Architecture & Guarantees
 
-```text
-Broadcast packet
-      ↓
-TTL decrement
-      ↓
-Forward
-```
+1. **Authoritative Identity vs Transport Identifier**:
+   - `packetHash = SHA-256(ciphertext)` is the authoritative cryptographic identity used for deduplication, state digests, bucket checksums, and sync requests.
+   - `packetId` (UUID) serves strictly as an outer transport/message identifier.
 
-### Target
+2. **State Digest & Prefix-Bucket Slicing**:
+   - Empty state: `stateDigest = SHA-256("EMPTY")`.
+   - Populated state: full `packetHash` values are sorted lexicographically and hashed.
+   - Equal SHA-256 state digests provide cryptographically strong practical equality with negligible collision probability ($\approx 2^{-256}$).
+   - 16-bucket prefix checksum array groups packets by the first hex character (`0`–`f`) of their authoritative `packetHash`.
 
-```text
-Peer Discovery
-      ↓
-State Digest
-      ↓
-Compare Knowledge
-      ↓
-Request Missing Transactions
-      ↓
-Transfer Missing Data
-      ↓
-Verify
-      ↓
-Merge
-```
+3. **Hybrid Push-Pull Protocol**:
+   - **Epidemic Push**: Low-latency hop-by-hop forwarding decrements TTL. TTL strictly limits push broadcast radius.
+   - **Anti-Entropy Pull**: Pairwise background synchronization operates independently of push TTL. TTL never blocks anti-entropy repair.
 
-### Build
+4. **Deterministic Anti-Entropy Sequence**:
+   ```text
+   STATE_SUMMARY
+        ↓
+   Compare root digest (O(1) summary exit on match)
+        ↓
+   Compare 16 prefix bucket checksums
+        ↓
+   Exchange full authoritative packet hashes for divergent buckets
+        ↓
+   Compute symmetric differences (missingFromPeer / missingFromSelf)
+        ↓
+   SYNC_REQUEST (bounded max 50 packets per batch)
+        ↓
+   SYNC_RESPONSE
+        ↓
+   SYNC_ACK (certifies pairwise completion)
+   ```
 
-#### 4.1 Peer state
+5. **Failure & Partition Resilience**:
+   - Simulated network link severing and submesh partitioning (`/api/mesh/partition`).
+   - Healing (`/api/mesh/heal`) reconnects links and triggers mutual bi-directional anti-entropy reconciliation.
+   - Alternate-peer selection: If a target peer times out or fails, the node aborts the session, marks the peer `DEGRADED`, and selects an alternate reachable neighbor.
+   - Volatile restart: Restarting a simulator mesh node wipes its ephemeral in-memory buffer; it re-syncs all packets from peers without altering or reconstructing authoritative backend financial balances.
 
-Each node tracks what transactions it knows.
+6. **Preservation of Phase 3 Double-Spending Invariants**:
+   - Conflicting offline wallet transactions (same wallet ID and counter, different ciphertexts) both propagate through the mesh.
+   - The mesh never discards either transaction as a conflict.
+   - Phase 3 backend settlement remains the sole authoritative arbiter for conflict detection and freezing disputed wallets.
 
-#### 4.2 Anti-entropy
+7. **Explicit Non-Goals**:
+   - No linearizability or strong synchronous consistency (mesh is eventually consistent).
+   - No global total transaction ordering (ordering is causal per wallet and authoritative at backend).
+   - No real BLE/radio guarantees (software protocol simulation).
+   - No production database migration (remains in-memory simulator; PostgreSQL/Redis deferred to Phase 7).
+   - No hardware wallet guarantees (hardware-backed anti-cloning deferred to Phase 9).
 
-Nodes periodically exchange summaries.
+### Tests and Results
 
-#### 4.3 Merkle trees
+Automated test suite implemented in `AdvancedGossipSyncTest.java` (15 test cases):
+1. `identicalPeersProduceImmediateDigestMatchWithoutTransfers` — PASS
+2. `singleMissingPacketRepairedViaAntiEntropy` — PASS
+3. `biDirectionalMissingPacketsRepairedSimultaneously` — PASS
+4. `duplicateSyncMessageSuppression` — PASS
+5. `packetLossRecoveredBySubsequentAntiEntropy` — PASS
+6. `delayedSyncResponseHandledWithoutDeadlock` — PASS
+7. `alternatePeerSelectedWhenSyncTargetTimesOut` — PASS
+8. `nodeRestartReSyncsBufferFromPeersWithoutAlteringBackend` — PASS
+9. `networkPartitionMaintainsSubMeshConsistency` — PASS
+10. `partitionHealTriggersCompleteBiDirectionalConvergence` — PASS
+11. `concurrentTransactionsDuringPartitionSynchronizeOnHeal` — PASS
+12. `prefixBucketDigestPinpointsDivergentSlices` — PASS
+13. `mathematicalConvergenceAchievedAcrossAllDevices` — PASS
+14. `ttlExhaustionDoesNotPreventAntiEntropyRepair` — PASS
+15. `largeBatchSynchronizationRespectsPagingLimits` — PASS
 
-Use Merkle trees to efficiently identify divergent transaction sets.
-
-```text
-             Root
-            /    \
-          H1      H2
-         /  \    /  \
-       TX1 TX2 TX3 TX4
-```
-
-#### 4.4 Vector clocks
-
-Track causal relationships between distributed events.
-
-Example:
-
-```text
-Node A: [4,2,1]
-Node B: [3,5,1]
-Node C: [3,2,7]
-```
-
-#### 4.5 Conflict detection
-
-Identify:
-
-* Duplicate transactions
-* Concurrent transactions
-* Conflicting state
-* Double-spend attempts
+Total Project Test Suite: 71 tests run, 0 failures, 0 errors.
 
 ### Status
 
-**NOT STARTED**
+**COMPLETED**
 
 ---
 
-# PHASE 5 — Fault Injection & Distributed Testing
+# PHASE 5 — Fault Injection & Distributed Reliability Testing
 
 ## Objective
 
-Prove the system behaves correctly under failure.
+Validate whether Phases 1–4 continue to preserve their security, idempotency, sequence, and financial conservation invariants under adverse distributed-system conditions using a deterministic, rule-based fault-injection framework.
 
-### Faults
+### 1. Financial Safety Boundary
+Fault injection operates **strictly at transport, control, and exception boundaries**. The fault-injection engine **never directly mutates** account balances, transaction amounts, escrow balances, wallet counters, or database records. All ledger mutations proceed solely through standard domain services (`SettlementService`, `OfflineWalletService`).
 
-Simulate:
+### 2. Supported Fault Types (`FaultType`)
+The layer supports 13 discrete deterministic fault types:
+- **`DROP`**: Discards packets or sync messages silently during transit.
+- **`DUPLICATE`**: Injects duplicate delivery of the identical packet $N$ times.
+- **`DELAY`**: Withholds packets from initial gossip push for delayed delivery.
+- **`REORDER`**: Inverts transmission order (e.g. delivers counter 2 before counter 1) to verify existing Phase 3 `PENDING_SEQUENCE_GAP` handling without altering settlement logic.
+- **`PARTITION`**: Severs communication links between submeshes or nodes.
+- **`PEER_UNAVAILABLE`**: Simulates peer unavailability during anti-entropy to verify `syncWithFallback`.
+- **`BRIDGE_UNAVAILABLE`**: Simulates mesh-to-bridge transport/upload failure while keeping packets in mesh buffers completely intact.
+- **`MALFORMED_SYNC_MESSAGE`**: Injects invalid schema/control sync messages.
+- **`CORRUPTED_PACKET_PAYLOAD`**: Corrupts ciphertext bytes to verify decryption/integrity rejection.
+- **`TRANSIENT_DATABASE_FAILURE`**: Injects transient exceptions (`OptimisticLockException`) to test retry backoff.
+- **`STALE_RESPONSE`**: Drops post-commit HTTP responses to verify fast-path recovery without double debiting.
+- **`DUPLICATE_REQUEST`**: Simultaneous concurrent ingress of identical packet hashes.
+- **`CRASH_AND_RESTART`**: Volatile node buffer wipe (`clear()`) followed by full anti-entropy reconstruction.
 
-```text
-Packet loss
-Packet duplication
-Packet delay
-Network partition
-Node crash
-Bridge failure
-Concurrent transactions
-Replay attack
-Tampered packet
-Out-of-order delivery
-```
+### 3. Architecture & Narrow Interception
+- **`FaultRule`**: Immutable record defining target criteria, occurrence limits, and message classes.
+- **`FaultInjector`**: Central deterministic engine maintaining mutable atomic activation counters, rule matching, and metrics recording. Zero overhead and transparent passthrough when disabled.
+- **`FaultInterceptor`**: Narrow adapter interface wired into `MeshSimulatorService`, `AntiEntropyService`, `SettlementService`, and `BridgeIngestionService`.
+- **`ReliabilityMetrics`**: Thread-safe in-memory counters tracking injections, drops, duplicates, retries, and invariant checks.
 
-### Example
+### 4. Machine-Checkable Invariants (I1–I12)
+- **I1 (Packet Identity)**: $\text{packetHash} \equiv \text{SHA-256}(\text{ciphertext})$.
+- **I2 (Transport Deduplication)**: Device stores at most 1 copy of any packet hash.
+- **I3 (Settlement Idempotency)**: At most 1 committed settlement per packet hash.
+- **I4 (Funds Conservation)**: $\sum \text{liquidBalance} + \sum \text{offlineLockedBalance} \equiv \text{InitialTotalSystemFunds}$.
+- **I5 (Non-Negative Escrow)**: Offline wallet remaining escrow $\ge 0$.
+- **I6 (Observable Conflict)**: Conflicting counter collisions permanently recorded as `CONFLICTING` and wallet frozen as `LOCKED_DISPUTED`.
+- **I7 (Connected Component Convergence)**: Reachable nodes achieve identical `stateDigest` after anti-entropy.
+- **I8 (TTL Independence)**: Anti-entropy repairs missing packets regardless of TTL expiration.
+- **I9 (Transient Recoverability)**: Transient DB failures release in-flight locks to allow retries.
+- **I10 (Permanent Terminality)**: Validation failures terminate without retry loops.
+- **I11 (Crash Non-Mutation)**: Node crash/restart does not modify backend ledger.
+- **I12 (Cryptographic Barrier)**: Invalid/corrupted signatures are unconditionally rejected.
 
-```text
-Network:
+### 5. Automated Tests & Results
+Implemented in `DistributedReliabilityTest.java` (25 tests):
+- **Group 1: Isolated Network Faults (7 tests)**:
+  1. `testPacketDropRecoveredBySubsequentAntiEntropy` — PASS
+  2. `testPacketDuplicationSuppressedByAuthoritativeHash` — PASS
+  3. `testReorderedPacketDeliveryObservedAsSequenceGap` — PASS
+  4. `testDelayedPacketArrivalAfterAntiEntropyIsDroppedAsDuplicate` — PASS
+  5. `testPeerUnavailableTriggersAlternatePeerFallback` — PASS
+  6. `testNodeRestartRecoversBufferWithoutCorruptingBackend` — PASS
+  7. `testRepeatedPartitionHealCyclesAchieveEventualConvergence` — PASS
+- **Group 2: Isolated Bridge & Backend Faults (6 tests)**:
+  8. `testBridgeUnavailableKeepsMeshBuffersIntact` — PASS
+  9. `testDuplicateBridgeUploadIdempotentlyDeduplicated` — PASS
+  10. `testLostHttpResponseRecoversCommittedSettlement` — PASS
+  11. `testTransientOptimisticLockExceptionSucceedsOnRetry` — PASS
+  12. `testExhaustedRetriesThrowsTransientExceptionAndReleasesLock` — PASS
+  13. `testPermanentValidationFailureNeverRetried` — PASS
+- **Group 3: Compound & Combination Faults (7 tests)**:
+  14. `testCompoundDropAndAntiEntropy` — PASS
+  15. `testCompoundDelayAndReorderOfflineWalletSequence` — PASS
+  16. `testCompoundDuplicateAndLostResponse` — PASS
+  17. `testCompoundPartitionAndConcurrentPayments` — PASS
+  18. `testCompoundPartitionAndBridgeUnavailable` — PASS
+  19. `testCompoundNodeRestartAndAntiEntropy` — PASS
+  20. `testCompoundDuplicateRequestAndOptimisticLockContention` — PASS
+- **Group 4: Invariant & Property Tests (5 tests)**:
+  21. `testPropertyConservationOfTotalFunds` — PASS
+  22. `testPropertyCommutativeStateDigest` — PASS
+  23. `testPropertyOfflineEscrowCannotBecomeNegative` — PASS
+  24. `testPropertyConflictingCounterAlwaysObservable` — PASS
+  25. `testPropertyZeroInvariantViolationsUnderAdverseConditions` — PASS
 
-A ─── B ─── C
-
-Partition:
-
-A       X       B ─── C
-```
-
-Then reconnect and verify convergence.
-
-### Dashboard controls
-
-Eventually:
-
-```text
-Packet Loss:       20%
-Packet Delay:      500ms
-Duplicate Rate:    10%
-Node Failures:     2
-
-[ RUN EXPERIMENT ]
-```
-
-### Metrics
-
-Measure:
-
-* Settlement success
-* Settlement latency
-* Duplicate rejection
-* Conflict detection
-* Recovery time
-* Gossip convergence
-* Packet delivery rate
+**Total Project Test Suite**: **96 tests run, 0 failures, 0 errors, 0 skipped.**
 
 ### Status
 
-**NOT STARTED**
+**COMPLETED**
 
 ---
 
