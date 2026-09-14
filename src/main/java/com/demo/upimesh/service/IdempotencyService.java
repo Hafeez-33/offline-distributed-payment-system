@@ -9,17 +9,20 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * In-memory idempotency cache. In production this would be Redis with SETNX +
- * TTL — exactly the same semantics, just distributed across instances.
+ * In-memory in-flight concurrency and idempotency gate.
  *
- * The contract:
- *   - claim(hash) returns true on first call, false on every call after that
- *     (within the TTL window)
- *   - the operation is atomic — even if 100 threads call claim(hash) at the
- *     same instant, exactly one returns true
+ * Provides fast-path deduplication and in-flight lock management:
+ *   - tryAcquire(hash): atomically acquires the in-flight processing gate. Returns true
+ *     if this thread acquired the gate, false if another thread is currently processing
+ *     or has already completed this packet.
+ *   - release(hash): releases the in-flight claim on transient failures or validation errors,
+ *     allowing subsequent legitimate retries.
+ *   - markCompleted(hash): retains the hash in the cache upon committed settlement.
  *
- * This is what kills the "three bridges deliver simultaneously" problem.
- * ConcurrentHashMap.putIfAbsent is the JVM-local equivalent of Redis SETNX.
+ * NOTE ON CORRECTNESS:
+ * The authoritative deduplication barrier is the database UNIQUE constraint on
+ * Transaction.packetHash. This in-memory structure acts as a fast concurrency gate
+ * to prevent duplicate work across threads.
  */
 @Service
 public class IdempotencyService {
@@ -30,13 +33,46 @@ public class IdempotencyService {
     private long ttlSeconds;
 
     /**
-     * Try to claim a hash. Returns true if this caller is the first; false if
-     * someone else already claimed it (i.e. the packet is a duplicate).
+     * Atomically try to acquire the in-flight processing gate for a packet hash.
+     * Returns true if successfully acquired; false if duplicate or currently in-flight.
      */
-    public boolean claim(String packetHash) {
+    public boolean tryAcquire(String packetHash) {
         Instant now = Instant.now();
         Instant prev = seen.putIfAbsent(packetHash, now);
         return prev == null;
+    }
+
+    /**
+     * Legacy alias for tryAcquire.
+     */
+    public boolean claim(String packetHash) {
+        return tryAcquire(packetHash);
+    }
+
+    /**
+     * Release the in-flight claim for a packet hash (e.g., after a transient failure or rollback).
+     * This allows subsequent deliveries of the same packet to be retried safely.
+     */
+    public void release(String packetHash) {
+        if (packetHash != null) {
+            seen.remove(packetHash);
+        }
+    }
+
+    /**
+     * Mark a packet hash as permanently completed in the fast-path cache.
+     */
+    public void markCompleted(String packetHash) {
+        if (packetHash != null) {
+            seen.put(packetHash, Instant.now());
+        }
+    }
+
+    /**
+     * Check if a hash is currently tracked.
+     */
+    public boolean isTracked(String packetHash) {
+        return seen.containsKey(packetHash);
     }
 
     public int size() {

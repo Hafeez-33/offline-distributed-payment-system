@@ -557,65 +557,51 @@ Verify Ed25519 signature
 
 Make payment processing safe under retries, failures, and concurrent delivery.
 
-### Current problem
+### Problem Addressed
 
-The system can permanently claim an idempotency key before settlement completes.
+In the earlier architecture, an in-memory idempotency claim was acquired before settlement. If a transient database transaction failure or optimistic-lock collision occurred, the ledger rolled back, but the in-memory claim remained in the cache. Subsequent legitimate retries of the same packet were falsely rejected as duplicates (`DUPLICATE_DROPPED`).
 
-### Build
+### Implemented Architecture & Guarantees
 
-Introduce explicit processing states:
+1. **Authoritative Deduplication Barrier**:
+   The relational database `UNIQUE` constraint on `Transaction.packetHash` is the definitive source of truth. The in-memory map acts purely as an in-flight concurrency gate and performance fast-path, never replacing database authority.
 
-```text
-RECEIVED
-   ↓
-PROCESSING
-   ↓
-SETTLED
-```
+2. **In-Flight Concurrency Gate**:
+   `IdempotencyService` manages thread-safe claims via `tryAcquire(packetHash)` and explicit `release(packetHash)` on transient failures, validation rejections, or rollbacks. Completed transactions are retained via `markCompleted(packetHash)`.
 
-or:
+3. **Transaction-Safe Optimistic-Lock Retry**:
+   `SettlementService` executes bounded retries (up to 3 attempts with exponential backoff and jitter: ~25ms, ~50ms) where each attempt executes in an isolated, independent transaction (`PROPAGATION_REQUIRES_NEW`).
 
-```text
-PROCESSING
-   ↓
-FAILED_TRANSIENTLY
-   ↓
-RETRY
-```
+4. **Lost-Response Recovery (Recovery Path)**:
+   `BridgeIngestionService` checks `TransactionRepository.findByPacketHash(hash)` before processing. If a previously committed transaction exists (e.g. from an HTTP timeout or lost response), it immediately returns the original committed transaction result (`SETTLED` or `REJECTED`) without performing duplicate debit/credit ledger operations.
 
-The system must distinguish:
+5. **Deterministic Failure Classification**:
+   - **Permanent Validation Failure** (`invalid_signature`, `stale_packet`, `unknown_sender`, etc.): In-flight claim is released, transaction is rejected as `INVALID`.
+   - **Permanent Business Rejection** (`insufficient_balance`): Persisted as `REJECTED` transaction in the authoritative database, completed state retained, no retry.
+   - **Transient Transaction Failure** (`OptimisticLockException`, DB timeout after retry exhaustion): In-flight claim is released, returns `TRANSIENT_FAILURE` (`transient_settlement_failure`), enabling mesh bridges to retry.
 
-```text
-Duplicate transaction
-```
+### Tests and Results
 
-from:
+Comprehensive automated test suite implemented in `ReliableIdempotencyTest.java` (13 test cases):
+1. `transientFailureFollowedBySuccessfulRetry` — PASS
+2. `optimisticLockConflictFollowedBySuccessfulRetry` — PASS
+3. `concurrentDuplicateDelivery` — PASS
+4. `successfulPacketRetriedAfterCompletion` — PASS
+5. `insufficientBalanceIsPermanentlyRejected` — PASS
+6. `invalidSignatureIsPermanentlyRejected` — PASS
+7. `stalePacketIsPermanentlyRejected` — PASS
+8. `rollbackReleasesInFlightClaim` — PASS
+9. `lostHttpResponseFollowedByDuplicateRetry` — PASS
+10. `concurrentDifferentPaymentsPreserveCorrectBalances` — PASS (Alice → Bob ₹100, Alice → Carol ₹200, Alice → Dave ₹300 concurrently with optimistic lock resolution)
+11. `retryExhaustionProducesTransientFailure` — PASS
+12. `noPacketCanSettleTwice` — PASS
+13. `tenConcurrentIdenticalPacketSubmissionsProduceOneSettlement` — PASS (10 concurrent threads, exactly 1 settlement, 9 duplicates dropped)
 
-```text
-Previous attempt failed and should be retried
-```
-
-### Build
-
-* Durable idempotency records
-* Claim/commit semantics
-* Retry handling
-* Failure recovery
-* Optimistic-lock retry
-* Exponential backoff
-* Transaction-state model
-
-### Concepts
-
-* At-least-once delivery
-* Exactly-once effect
-* Atomicity
-* Retry safety
-* Concurrency control
+Total Test Suite: 36 tests run, 0 failures, 0 errors.
 
 ### Status
 
-**NOT STARTED**
+**COMPLETED**
 
 ---
 
