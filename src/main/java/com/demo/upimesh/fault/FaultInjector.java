@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -113,6 +114,20 @@ public class FaultInjector implements FaultInterceptor {
             metrics.reset();
         }
         log.debug("FaultInjector reset complete. All rules and counters cleared.");
+    }
+
+    public List<FaultRule> getRules() {
+        return Collections.unmodifiableList(rules);
+    }
+
+    public boolean removeRule(String faultId) {
+        if (faultId == null) return false;
+        boolean removed = rules.removeIf(r -> faultId.equals(r.faultId()));
+        if (removed) {
+            activationCounters.remove(faultId);
+            log.info("Removed fault rule {}", faultId);
+        }
+        return removed;
     }
 
     // ---------------------------------------------------------------- FaultInterceptor Implementation

@@ -3,7 +3,7 @@
 ## Long-Term Engineering Plan
 
 > **Status:** Active Development
-> **Current Phase:** Phase 0 — Repository Understanding / Baseline
+> **Current Phase:** Phase 6 — React Real-Time Distributed Payment Dashboard (COMPLETED)
 > **Primary Backend:** Java 17 + Spring Boot
 > **Target Frontend:** React + TypeScript
 > **Target Mobile:** Android / Kotlin
@@ -870,106 +870,62 @@ Implemented in `DistributedReliabilityTest.java` (25 tests):
 
 ---
 
-# PHASE 6 — Real-Time React Frontend
+# PHASE 6 — Real-Time React Distributed Payment Dashboard
 
 ## Objective
 
-Replace the basic demo dashboard with a professional engineering dashboard.
+Deliver a production-style React dashboard for observing and interacting with the Spring Boot virtual mesh simulator, acting strictly as a visualization and control layer without duplicating domain or financial logic.
 
-### Stack
+### 1. Architectural Principles
+- **Visualization & Control Layer Only**: Zero business logic, balance computations, escrow tracking, sequence counter validations, hash calculations, or invariant audits executed on the client.
+- **Adaptive Polling**: 2000 ms active tab, 10000 ms background/hidden tab, immediate mutation invalidation refetch. Failures exceeding ~5000 ms trigger an explicit `STALE DATA` warning and disable mutation controls. Persistent connection warning displayed on backend outage.
+- **Strict Boundary Integrity**: No WebSockets or SSE; no PostgreSQL, Redis, Android, BLE, Prometheus, or distributed consensus. Legacy `/api/transactions` remains untouched.
+- **Authoritative Server Invariants**: Invariants I1–I12 evaluated dynamically by `InvariantAuditService` on the server and consumed read-only by the dashboard.
 
-```text
-React
-TypeScript
-Tailwind CSS
-WebSocket/SSE
-```
+### 2. Implemented Stack & Directory Structure
+- **Frontend Core**: React 18, TypeScript (strict mode), Vite 5, Tailwind CSS, Lucide React icons.
+- **Frontend Architecture**:
+  ```text
+  frontend/src/
+    layouts/     AppLayout, Header, Sidebar
+    pages/       OverviewPage, MeshPage, WalletsPage, TransactionsPage, ReliabilityPage, FaultInjectionPage
+    components/  common/ (Badge, Button, Card, Modal, StatCard)
+                 mesh/ (TopologyCanvas, DeviceNode, MeshLink, NodeDetailsDrawer)
+                 wallets/ (WalletTable, AllocateModal)
+                 transactions/ (TransactionTable, TxReceiptModal)
+                 reliability/ (InvariantCard, MetricGauge)
+                 faults/ (FaultRuleTable, InjectFaultModal, FaultPresetBar)
+    hooks/       usePolling
+    services/    api (typed backend REST client)
+    types/       strict TypeScript models
+    utils/       formatters, constants, topologyLayout
+  ```
 
-### Pages
+### 3. Backend DTO & API Surface
+- **DTOs** (`com.demo.upimesh.dto`): `DashboardOverviewDto`, `MeshSummaryDto`, `DeviceDetailDto`, `WalletSummaryDto`, `PaginatedTransactionsDto`, `ReliabilityReportDto`, `FaultRuleRequest`.
+- **Endpoints** (`DashboardApiController`):
+  - `GET /api/dashboard/overview` — Lightweight aggregate metrics only.
+  - `GET /api/dashboard/mesh` — Lightweight mesh summary with device list & severed links.
+  - `GET /api/dashboard/mesh/devices/{deviceId}` — On-demand deep node inspection (16 bucket checksums, peer sync tables, full packet hashes).
+  - `GET /api/dashboard/wallets` — Authoritative escrow & liquid balances.
+  - `GET /api/dashboard/transactions` — Paginated and filtered transaction search.
+  - `GET /api/dashboard/reliability` — Server-evaluated I1–I12 invariants and `ReliabilityMetrics`.
+  - `GET /api/faults/rules`, `POST /api/faults/rule`, `DELETE /api/faults/rule/{faultId}`, `POST /api/faults/reset`, `POST /api/faults/toggle` — Fault injection management with strict backend validation.
+- **CORS Configuration** (`WebCorsConfig`): Allows `http://localhost:5173` for `GET`, `POST`, `DELETE`, `OPTIONS` on `/api/**`.
 
-#### 6.1 System Dashboard
-
-Display:
-
-```text
-Online/Offline status
-Mesh nodes
-Pending transactions
-Settled transactions
-Rejected transactions
-Conflicts
-Security events
-```
-
-#### 6.2 Mesh Visualization
-
-Show:
-
-```text
-Phone A
-   │
-   ▼
-Phone B
-   │
-   ▼
-Phone C
-   │
-   ▼
-Bridge
-   │
-   ▼
-Backend
-```
-
-Animate packet propagation.
-
-#### 6.3 Transaction Explorer
-
-Display:
-
-```text
-Transaction ID
-Sender
-Receiver
-Amount
-Timestamp
-Status
-Packet hash
-Hop count
-TTL
-Signature status
-```
-
-#### 6.4 Security Monitor
-
-Display:
-
-```text
-Invalid signatures
-Replay attempts
-Duplicate packets
-Tampered packets
-Double-spend conflicts
-```
-
-#### 6.5 Event Stream
-
-Example:
-
-```text
-21:42:01 PAYMENT_CREATED
-21:42:01 ENCRYPTED
-21:42:02 NODE_A_RECEIVED
-21:42:02 GOSSIP_PROPAGATED
-21:42:04 BRIDGE_RECEIVED
-21:42:05 SIGNATURE_VERIFIED
-21:42:05 IDEMPOTENCY_CLAIMED
-21:42:05 SETTLEMENT_COMMITTED
-```
+### 4. Automated Verification & Testing
+- **Frontend Test Suite** (17 tests across 6 suites in `frontend/src/test/`):
+  - `usePolling.test.ts` (3 tests): Active cadence (2s), hidden tab backoff (10s), immediate mutation refetch.
+  - `TopologyCanvas.test.tsx` (4 tests): Actual device list rendering, fallback dynamic layout, link partition styling, node detail fetch.
+  - `TransactionTable.test.tsx` (3 tests): Pagination controls, status filtering, receipt inspection modal.
+  - `FaultRuleTable.test.tsx` (3 tests): Active rules list, individual rule deletion, empty state.
+  - `ReliabilityPage.test.tsx` (1 test): Authoritative I1–I12 invariant badges and metrics gauges.
+  - `BackendOutage.test.tsx` (3 tests): Stale data banner after 5s outage, mutation controls disabled when stale, persistent disconnection alert.
+- **Backend Test Suite**: 103 tests passing (96 Phase 1–5 baseline + 7 new dashboard controller integration tests), 0 failures, 0 errors.
 
 ### Status
 
-**NOT STARTED**
+**COMPLETED**
 
 ---
 
