@@ -82,13 +82,13 @@ The legacy backend-rendered Thymeleaf dashboard remains accessible at **http://l
 
 ### Run the tests
 
-#### Backend Tests (103 tests across 8 classes)
+#### Backend Tests (111 tests across 13 classes)
 
 ```cmd
 mvnw.cmd test
 ```
 
-Runs the complete 103-test automated verification suite:
+Runs the complete 111-test automated verification suite:
 - **`SignatureServiceTest`** (10 tests): Ed25519 canonicalization, signing, and verification.
 - **`CryptographicIdentityTest`** (10 tests): Sender cryptographic authorization & replay prevention.
 - **`IdempotencyConcurrencyTest`** (3 tests): 3-bridges concurrent delivery & tamper detection.
@@ -97,12 +97,17 @@ Runs the complete 103-test automated verification suite:
 - **`AdvancedGossipSyncTest`** (15 tests): Pairwise anti-entropy, state digests, 16-bucket slicing, and partition healing.
 - **`DistributedReliabilityTest`** (25 tests): Phase 5 deterministic fault injection across network, bridge, compound, and property scenarios.
 - **`DashboardApiControllerTest`** (7 tests): Phase 6 REST API endpoints, DTO contracts, fault validation, and single-rule removal.
+- **`FlywayMigrationTest`** (3 tests): Phase 7 Flyway V1 schema migration, table verification, and unique index constraints.
+- **`PostgresPersistenceIntegrationTest`** (Phase 7): PostgreSQL container persistence and `UNIQUE(packet_hash)` DB-level enforcement.
+- **`RestartDurabilityIntegrationTest`** (1 test): Phase 7 ledger, escrow, and idempotency barrier survival across ApplicationContext restart.
+- **`RedisFailureResilienceTest`** (1 test): Phase 7 non-authoritative Redis outage fallback and duplicate settlement protection.
+- **`RedisCoordinationAndCacheTest`** (3 tests): Phase 7 distributed locks, cache hit/miss semantics, and mutation invalidation.
 
 #### Frontend Tests (17 tests across 6 suites)
 
 ```bash
 cd frontend
-npm test
+npm test -- --run
 ```
 
 Runs Vitest + React Testing Library + MSW:
@@ -613,6 +618,70 @@ Phase 6 introduces a production-style React dashboard acting as a **pure visuali
 4. **Transactions (`/transactions`)**: Server-paginated and status-filtered transaction explorer with packet hash search, cryptographic receipt viewer modal, and conflict reason inspection.
 5. **Reliability & Invariants (`/reliability`)**: Real-time reliability metric gauges (injections, drops, duplicates, retries, recoveries) and authoritative server evaluations of machine-checkable Invariants **I1 through I12**.
 6. **Fault Injection Lab (`/faults`)**: Deterministic fault-injection workspace with preset buttons (4G bridge outage, network partition, drop burst, transient DB error), custom rule creator with strict backend validation, active rules table with individual rule deletion, injector pause/resume toggle, and reset button. Displays a prominent **"SIMULATION ONLY — Fault injection operates exclusively on simulated mesh and bridge transport layers"** warning banner.
+
+---
+
+## Phase 7 — PostgreSQL + Redis Infrastructure
+
+### Core Principle
+> **"PostgreSQL is the authoritative financial store. Redis is non-authoritative coordination/cache."**
+
+### Architecture Highlights
+1. **Authoritative Persistence (PostgreSQL 16 + Flyway)**:
+   - All financial ledgers, account balances, offline wallet escrows, monotonic sequence counters, and transaction histories reside authoritatively in PostgreSQL.
+   - Managed via deterministic Flyway versioned migrations (`V1__initial_schema.sql`).
+   - Hardened with database-level constraints:
+     - `UNIQUE(packet_hash)` on the `transactions` table.
+     - `CHECK (balance >= 0)` and `CHECK (offline_locked_balance >= 0)` on `accounts`.
+     - `CHECK (settled_amount + remaining_amount <= allocated_amount)` on `offline_wallets`.
+     - Monetary amounts strictly formatted as `NUMERIC(19, 2)`.
+     - Foreign key referential integrity across all relationships with `ON DELETE SET NULL` on self-referencing winning transaction pointers.
+   - Production JPA configuration uses `ddl-auto=validate` to prevent any runtime schema modifications.
+2. **Distributed Coordination & Caching (Redis 7)**:
+   - Redis operates purely as a transient coordination gate and read cache:
+     - **Distributed Lock Key**: `upi:lock:<packetHash>` with an explicit 60-second in-flight TTL (and 24-hour completion TTL).
+     - **Dashboard Read Cache Keys**: `upi:cache:dashboard:overview`, `upi:cache:dashboard:mesh`, `upi:cache:dashboard:reliability` with an explicit 10-second TTL.
+   - **Mutation-Driven Cache Invalidation**: Caches are immediately invalidated upon:
+     - Financial transaction settlements, rejections, or conflicts.
+     - Offline wallet escrow allocations or reconciliations.
+     - Mesh topology changes (partitioning, healing, flushing, syncing).
+     - Fault injector rule registrations, removals, toggles, or resets.
+3. **Resilient Failover & Non-Authoritative Fallback**:
+   - If Redis is unavailable, offline, or times out:
+     - `IdempotencyService` catches connection exceptions, increments `redisFallbackTotal`, and falls back to the local in-flight gate.
+     - Requests still reach the authoritative PostgreSQL database barrier.
+     - Duplicate packets are stopped by PostgreSQL `UNIQUE(packet_hash)` without risk of double-debiting.
+     - Redis failure NEVER compromises financial correctness.
+4. **Restart Durability Tested**:
+   - Verified via `RestartDurabilityIntegrationTest`: Even if the application context is completely shut down and destroyed, all balances, escrow states, settled transactions, and idempotency deduplication barriers survive upon restart.
+
+### Local Development Setup (Docker Compose)
+
+Start PostgreSQL 16 and Redis 7 in containers with persistent storage and healthchecks:
+
+```bash
+# Start infrastructure
+docker compose up -d
+
+# Run backend with PostgreSQL + Redis
+mvnw.cmd spring-boot:run
+
+# Shutdown infrastructure without losing data
+docker compose down
+```
+
+### Environment Variables
+
+| Variable | Description | Local Default |
+|---|---|---|
+| `SPRING_DATASOURCE_URL` | PostgreSQL JDBC URL | `jdbc:postgresql://localhost:5432/upimesh` |
+| `SPRING_DATASOURCE_USERNAME` | PostgreSQL username | `postgres` |
+| `SPRING_DATASOURCE_PASSWORD` | PostgreSQL password | `postgres` |
+| `SPRING_DATA_REDIS_HOST` | Redis host | `localhost` |
+| `SPRING_DATA_REDIS_PORT` | Redis port | `6379` |
+| `SPRING_DATA_REDIS_PASSWORD` | Redis password (if required) | *empty* |
+
+---
 
 ## What's NOT real (and what would change for production)
 

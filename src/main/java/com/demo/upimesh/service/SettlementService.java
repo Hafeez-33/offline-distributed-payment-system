@@ -52,8 +52,22 @@ public class SettlementService {
     @Autowired(required = false)
     private com.demo.upimesh.fault.FaultInterceptor faultInterceptor;
 
+    @Autowired(required = false)
+    private DashboardCacheService cacheService;
+
+    @Autowired(required = false)
+    private InfrastructureMetrics infrastructureMetrics;
+
     public void setFaultInterceptor(com.demo.upimesh.fault.FaultInterceptor faultInterceptor) {
         this.faultInterceptor = faultInterceptor;
+    }
+
+    public void setCacheService(DashboardCacheService cacheService) {
+        this.cacheService = cacheService;
+    }
+
+    public void setInfrastructureMetrics(InfrastructureMetrics infrastructureMetrics) {
+        this.infrastructureMetrics = infrastructureMetrics;
     }
 
     public void setBaseBackoffMs(long baseBackoffMs) {
@@ -72,13 +86,20 @@ public class SettlementService {
                 if (faultInterceptor != null) {
                     faultInterceptor.inspectSettlementAttempt(packetHash, attempt);
                 }
-                return executeInNewTransaction(instruction, packetHash, bridgeNodeId, hopCount);
+                Transaction result = executeInNewTransaction(instruction, packetHash, bridgeNodeId, hopCount);
+                if (cacheService != null) {
+                    cacheService.invalidateOverview();
+                }
+                return result;
             } catch (Exception e) {
                 if (!isRetryable(e)) {
                     if (e instanceof RuntimeException re) throw re;
                     throw new RuntimeException(e);
                 }
                 lastException = e;
+                if (infrastructureMetrics != null) {
+                    infrastructureMetrics.recordDbRetry();
+                }
                 log.warn("Optimistic lock / transient conflict on attempt {}/{} for packet {}: {}",
                         attempt, MAX_ATTEMPTS, packetHash.substring(0, Math.min(12, packetHash.length())), e.getMessage());
 
