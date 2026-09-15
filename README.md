@@ -56,25 +56,39 @@ The first run downloads Maven (~10 MB) and all dependencies (~80 MB) — give it
 ./mvnw spring-boot:run
 ```
 
-### Open the dashboard
+### Run Frontend Dashboard (React + TypeScript + Vite)
 
-Once you see `Started UpiMeshApplication in X.XXX seconds`, open:
+In a separate terminal, navigate to the `frontend/` directory:
 
-**http://localhost:8080**
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-You'll get a dark dashboard with everything you need to drive the demo.
+The frontend dashboard will be available at:
 
-### Stop the server
+**http://localhost:5173**
 
-`Ctrl+C` in the terminal.
+It automatically proxies `/api` requests to the backend on `http://localhost:8080`.
+
+### Legacy Dashboard
+
+The legacy backend-rendered Thymeleaf dashboard remains accessible at **http://localhost:8080**.
+
+### Stop the servers
+
+`Ctrl+C` in each terminal.
 
 ### Run the tests
+
+#### Backend Tests (103 tests across 8 classes)
 
 ```cmd
 mvnw.cmd test
 ```
 
-Runs the complete 96-test automated verification suite across all 7 test classes:
+Runs the complete 103-test automated verification suite:
 - **`SignatureServiceTest`** (10 tests): Ed25519 canonicalization, signing, and verification.
 - **`CryptographicIdentityTest`** (10 tests): Sender cryptographic authorization & replay prevention.
 - **`IdempotencyConcurrencyTest`** (3 tests): 3-bridges concurrent delivery & tamper detection.
@@ -82,6 +96,22 @@ Runs the complete 96-test automated verification suite across all 7 test classes
 - **`OfflineWalletReliabilityTest`** (20 tests): Escrow allocation, sequence gap state machine, fork detection, and receipt validation.
 - **`AdvancedGossipSyncTest`** (15 tests): Pairwise anti-entropy, state digests, 16-bucket slicing, and partition healing.
 - **`DistributedReliabilityTest`** (25 tests): Phase 5 deterministic fault injection across network, bridge, compound, and property scenarios.
+- **`DashboardApiControllerTest`** (7 tests): Phase 6 REST API endpoints, DTO contracts, fault validation, and single-rule removal.
+
+#### Frontend Tests (17 tests across 6 suites)
+
+```bash
+cd frontend
+npm test
+```
+
+Runs Vitest + React Testing Library + MSW:
+- `usePolling.test.ts` (3 tests): Active cadence (2s), hidden tab backoff (10s), immediate mutation refetch.
+- `TopologyCanvas.test.tsx` (4 tests): Actual device list rendering, fallback dynamic layout, link partition styling, node detail fetch.
+- `TransactionTable.test.tsx` (3 tests): Pagination controls, status filtering, receipt inspection modal.
+- `FaultRuleTable.test.tsx` (3 tests): Active rules list, individual rule deletion, empty state.
+- `ReliabilityPage.test.tsx` (1 test): Authoritative I1–I12 invariant badges and metrics gauges.
+- `BackendOutage.test.tsx` (3 tests): Stale data banner after 5s outage, mutation controls disabled when stale, persistent disconnection alert.
 
 ---
 
@@ -539,8 +569,50 @@ Key test suites:
 - **`CryptographicIdentityTest`** — 10 tests covering Ed25519 signature verification, forged signatures, cross-account keys, algorithm validation, and freshness boundaries.
 - **`IdempotencyConcurrencyTest`** — 3 tests verifying parallel bridge uploads and ciphertext tamper resistance.
 - **`SignatureServiceTest`** — Deterministic canonical serialization and digital signature unit tests.
+- **`OfflineWalletReliabilityTest`** — 20 tests verifying escrow allocation, sequence gap state machine, fork detection, and receipt validation.
+- **`AdvancedGossipSyncTest`** — 15 tests verifying pairwise anti-entropy, state digests, 16-bucket slicing, and partition healing.
+- **`DistributedReliabilityTest`** — 25 tests verifying deterministic fault injection and property preservation.
+- **`DashboardApiControllerTest`** — 7 integration tests verifying Phase 6 REST API endpoints, DTO contracts, input validation, and single-rule deletion.
 
 ---
+
+## Phase 6: Real-Time React Distributed Payment Dashboard
+
+Phase 6 introduces a production-style React dashboard acting as a **pure visualization and control layer** over the existing Spring Boot virtual mesh simulator.
+
+### Architecture & Boundaries
+
+```text
+┌────────────────────────────────────────────────────────┐
+│      React Dashboard (Vite + TypeScript + Tailwind)    │
+│  - Adaptive Polling (2s active / 10s background)       │
+│  - Stale state detection (>5s) & disabled controls     │
+│  - Zero business logic / balance calculations in React │
+└───────────────────────────┬────────────────────────────┘
+                            │ HTTP Polling (Port 5173 -> 8080)
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│      Spring Boot Backend (Port 8080)                   │
+│  - DashboardApiController (typed DTO layer)            │
+│  - InvariantAuditService (authoritative I1-I12 audit)  │
+│  - Strict Fault API input validation                   │
+│  - MeshSimulatorService & AntiEntropyService           │
+│  - SettlementService & OfflineWalletService            │
+└────────────────────────────────────────────────────────┘
+```
+
+- **Strict Boundary**: The React dashboard never computes escrow, balances, sequence counters, hashes, or invariant outcomes. All calculations are performed authoritatively by the Spring Boot backend.
+- **Transport**: Adaptive polling is used exclusively (no WebSockets or SSE). The dashboard polls every 2000 ms when the browser tab is active, backs off to 10000 ms when hidden, and performs immediate refetches upon user mutations.
+- **Stale Data Safety**: If backend polling fails for more than ~5000 ms, the UI displays a prominent `STALE DATA` warning and automatically disables all mutation controls (partition, heal, inject, reset) to prevent inconsistent state transitions.
+
+### Dashboard Pages
+
+1. **Overview (`/`)**: High-level aggregate KPIs: system health status, total devices, online bridges, convergence state, total held packets, liquid and escrow fund totals, active faults, and invariant violation counters.
+2. **Mesh Topology (`/mesh`)**: Interactive visual topology canvas displaying simulated device nodes (with deterministic coordinates and dynamic circular fallback), connection links (active, severed, syncing), packet counts, and truncated state digests. Clicking any node opens an on-demand inspection drawer with 16 bucket checksums, held packet details, and peer synchronization tables.
+3. **Wallets (`/wallets`)**: Authoritative offline wallet registry and demo bank accounts showing escrow allocations, settled amounts, remaining allowances, and account liquid balances. Supports modal escrow allocations and wallet reconciliation/closure.
+4. **Transactions (`/transactions`)**: Server-paginated and status-filtered transaction explorer with packet hash search, cryptographic receipt viewer modal, and conflict reason inspection.
+5. **Reliability & Invariants (`/reliability`)**: Real-time reliability metric gauges (injections, drops, duplicates, retries, recoveries) and authoritative server evaluations of machine-checkable Invariants **I1 through I12**.
+6. **Fault Injection Lab (`/faults`)**: Deterministic fault-injection workspace with preset buttons (4G bridge outage, network partition, drop burst, transient DB error), custom rule creator with strict backend validation, active rules table with individual rule deletion, injector pause/resume toggle, and reset button. Displays a prominent **"SIMULATION ONLY — Fault injection operates exclusively on simulated mesh and bridge transport layers"** warning banner.
 
 ## What's NOT real (and what would change for production)
 

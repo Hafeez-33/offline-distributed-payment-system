@@ -53,6 +53,10 @@ public class Account {
                 .add(offlineLockedBalance != null ? offlineLockedBalance : BigDecimal.ZERO);
     }
 
+    public BigDecimal getLiquidBalance() {
+        return balance != null ? balance : BigDecimal.ZERO;
+    }
+
     public BigDecimal getOfflineLockedBalance() {
         return offlineLockedBalance != null ? offlineLockedBalance : BigDecimal.ZERO;
     }
