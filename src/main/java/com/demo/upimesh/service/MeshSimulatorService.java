@@ -33,6 +33,9 @@ public class MeshSimulatorService {
     @Autowired(required = false)
     private com.demo.upimesh.fault.FaultInterceptor faultInterceptor;
 
+    @Autowired(required = false)
+    private DashboardCacheService cacheService;
+
     public MeshSimulatorService() {
         seedDefaultDevices();
     }
@@ -50,6 +53,10 @@ public class MeshSimulatorService {
 
     public void setFaultInterceptor(com.demo.upimesh.fault.FaultInterceptor faultInterceptor) {
         this.faultInterceptor = faultInterceptor;
+    }
+
+    public void setCacheService(DashboardCacheService cacheService) {
+        this.cacheService = cacheService;
     }
 
     private void seedDefaultDevices() {
@@ -81,11 +88,13 @@ public class MeshSimulatorService {
     public void severLink(String a, String b) {
         severedLinks.add(linkKey(a, b));
         log.warn("Severed mesh link between {} and {}", a, b);
+        invalidateTopologyCache();
     }
 
     public void healLink(String a, String b) {
         severedLinks.remove(linkKey(a, b));
         log.info("Healed mesh link between {} and {}", a, b);
+        invalidateTopologyCache();
     }
 
     public void partitionSubmeshes(List<String> submeshA, List<String> submeshB) {
@@ -100,6 +109,14 @@ public class MeshSimulatorService {
     public void healAll() {
         severedLinks.clear();
         log.info("Healed all mesh links. Network topology fully reconnected.");
+        invalidateTopologyCache();
+    }
+
+    private void invalidateTopologyCache() {
+        if (cacheService != null) {
+            cacheService.invalidateMesh();
+            cacheService.invalidateOverview();
+        }
     }
 
     public boolean isReachable(String a, String b) {
@@ -276,6 +293,7 @@ public class MeshSimulatorService {
     public void resetMesh() {
         severedLinks.clear();
         devices.values().forEach(VirtualDevice::clear);
+        invalidateTopologyCache();
     }
 
     public record GossipResult(int transfers, Map<String, Integer> deviceCounts) {}

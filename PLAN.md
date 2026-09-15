@@ -3,9 +3,10 @@
 ## Long-Term Engineering Plan
 
 > **Status:** Active Development
-> **Current Phase:** Phase 6 — React Real-Time Distributed Payment Dashboard (COMPLETED)
-> **Primary Backend:** Java 17 + Spring Boot
-> **Target Frontend:** React + TypeScript
+> **Current Phase:** Phase 7 — PostgreSQL + Redis Infrastructure (COMPLETED)
+> **Primary Backend:** Java 17 + Spring Boot + PostgreSQL 16 + Redis 7
+> **Database Migration:** Flyway
+> **Target Frontend:** React + TypeScript (Phase 6 COMPLETED)
 > **Target Mobile:** Android / Kotlin
 > **Architecture Goal:** Secure, offline-first, distributed payment protocol prototype
 
@@ -1342,7 +1343,43 @@ The objective is to demonstrate how a secure distributed system can maintain tru
 
 ---
 
-# 18. Important Disclaimer
+# 18. Phase 7 — PostgreSQL + Redis Infrastructure (COMPLETED)
+
+### 18.1 Architectural Principle
+**"PostgreSQL is the authoritative financial store. Redis is non-authoritative coordination/cache."**
+
+### 18.2 Schema & Persistence Architecture
+* **Flyway Migrations:** Deterministic SQL migrations (`V1__initial_schema.sql`) managing production schema lifecycle. `ddl-auto=create/create-drop` is strictly prohibited in production.
+* **Authoritative Tables:**
+  * `accounts`: Stores liquid funds and `offline_locked_balance` with non-negative constraints (`NUMERIC(19, 2)`), registered Ed25519 public keys, and optimistic locking (`version`).
+  * `offline_wallets`: Tracks escrow allocations, cumulative settled funds, remaining escrow, monotonic sequence counters, expiry timestamps, and conflict states (`ACTIVE`, `LOCKED_DISPUTED`, etc.).
+  * `transactions`: Permanent ledger record enforcing `UNIQUE(packet_hash)`, sender/receiver foreign keys, and cryptographic audit signatures.
+* **Database Constraints:** Core financial correctness is enforced at the database level:
+  * `UNIQUE(packet_hash)`
+  * `CHECK (balance >= 0)` and `CHECK (offline_locked_balance >= 0)`
+  * `CHECK (settled_amount + remaining_amount <= allocated_amount)`
+  * Foreign key referential integrity with `ON DELETE SET NULL` on self-referencing winning transaction pointers.
+
+### 18.3 Distributed Coordination & Graceful Degradation
+* **Redis Lock Namespace:** `upi:lock:<packetHash>` with explicit 60-second in-flight TTL and 24-hour completion TTL.
+* **Non-Authoritative Resilience:** If Redis is down, in-flight acquisition catches connection failures, increments `redisFallbackTotal`, and falls back to local concurrency gates. The transaction continues to execute safely against the PostgreSQL `UNIQUE(packet_hash)` barrier without duplicate debits or financial corruption.
+
+### 18.4 Dashboard Cache-Aside & Invalidation
+* **Cache Keys:** `upi:cache:dashboard:overview`, `upi:cache:dashboard:mesh`, `upi:cache:dashboard:reliability` with 10-second TTL.
+* **Mutation-Driven Invalidation:** Eviction occurs immediately upon:
+  * Transaction settlement / rejection / conflict
+  * Offline wallet allocation / reconciliation
+  * Mesh topology partition, heal, flush, or sync
+  * Fault rule addition, deletion, toggle, or reset
+
+### 18.5 Verified Durability & Testing
+* **Restart Durability:** Proven via `RestartDurabilityIntegrationTest` across Spring ApplicationContext destruction and recreation.
+* **Redis Failure Resilience:** Proven via `RedisFailureResilienceTest` during simulated Redis outages.
+* **Test Suite:** 111 backend tests (0 failures, 0 errors), 17 frontend tests (0 failures).
+
+---
+
+# 19. Important Disclaimer
 
 This is an engineering/research prototype inspired by offline digital payment concepts.
 

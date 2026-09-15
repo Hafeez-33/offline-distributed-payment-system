@@ -32,6 +32,9 @@ public class OfflineWalletService {
     private final ServerKeyHolder serverKeyHolder;
     private final SignatureService signatureService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DashboardCacheService cacheService;
+
     public OfflineWalletService(AccountRepository accountRepository,
                                   OfflineWalletRepository walletRepository,
                                   ServerKeyHolder serverKeyHolder,
@@ -40,6 +43,10 @@ public class OfflineWalletService {
         this.walletRepository = walletRepository;
         this.serverKeyHolder = serverKeyHolder;
         this.signatureService = signatureService;
+    }
+
+    public void setCacheService(DashboardCacheService cacheService) {
+        this.cacheService = cacheService;
     }
 
     /**
@@ -136,6 +143,10 @@ public class OfflineWalletService {
             log.info("Allocated offline wallet: id={}, owner={}, amount={}, epoch={}, validUntil={}",
                     walletId, account.getVpa(), amount, nextEpoch, validUntil);
 
+            if (cacheService != null) {
+                cacheService.invalidateOverview();
+            }
+
             return new AllocationResult(wallet, signedCert);
         } catch (Exception e) {
             throw new RuntimeException("Failed to sign offline wallet certificate", e);
@@ -173,6 +184,10 @@ public class OfflineWalletService {
 
         log.info("Reconciled offline wallet: id={}, owner={}, unusedEscrowReturned={}",
                 walletId, wallet.getOwnerVpa(), unusedEscrow);
+
+        if (cacheService != null) {
+            cacheService.invalidateOverview();
+        }
 
         return closedWallet;
     }

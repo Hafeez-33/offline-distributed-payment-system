@@ -40,11 +40,23 @@ public class DashboardApiController {
     @Autowired private InvariantAuditService invariantService;
     @Autowired(required = false) private FaultInjector faultInjector;
     @Autowired(required = false) private ReliabilityMetrics metrics;
+    @Autowired(required = false) private DashboardCacheService cacheService;
+
+    public void setCacheService(DashboardCacheService cacheService) {
+        this.cacheService = cacheService;
+    }
 
     // ------------------------------------------------------------------ Overview
 
     @GetMapping("/dashboard/overview")
     public ResponseEntity<DashboardOverviewDto> getOverview() {
+        if (cacheService != null) {
+            return ResponseEntity.ok(cacheService.getOverview(this::computeOverview));
+        }
+        return ResponseEntity.ok(computeOverview());
+    }
+
+    public DashboardOverviewDto computeOverview() {
         List<Account> accounts = accountRepo.findAll();
         List<OfflineWallet> wallets = walletRepo.findAll();
         List<Transaction> txs = txRepo.findAll();
@@ -103,7 +115,7 @@ public class DashboardApiController {
                 .filter(VirtualDevice::hasInternet)
                 .count();
 
-        DashboardOverviewDto dto = new DashboardOverviewDto(
+        return new DashboardOverviewDto(
                 status,
                 mesh.getDevices().size(),
                 onlineBridges,
@@ -122,14 +134,19 @@ public class DashboardApiController {
                 invariantViolations,
                 Instant.now()
         );
-
-        return ResponseEntity.ok(dto);
     }
 
     // ------------------------------------------------------------------ Mesh Topology
 
     @GetMapping("/dashboard/mesh")
     public ResponseEntity<MeshSummaryDto> getMeshSummary() {
+        if (cacheService != null) {
+            return ResponseEntity.ok(cacheService.getMeshSummary(this::computeMeshSummary));
+        }
+        return ResponseEntity.ok(computeMeshSummary());
+    }
+
+    public MeshSummaryDto computeMeshSummary() {
         List<DeviceSummary> deviceSummaries = mesh.getDevices().stream()
                 .map(d -> new DeviceSummary(
                         d.getDeviceId(),
@@ -139,11 +156,11 @@ public class DashboardApiController {
                 ))
                 .toList();
 
-        return ResponseEntity.ok(new MeshSummaryDto(
+        return new MeshSummaryDto(
                 deviceSummaries,
                 mesh.getSeveredLinks(),
                 mesh.isMeshFullyConverged()
-        ));
+        );
     }
 
     @GetMapping("/dashboard/mesh/devices/{deviceId}")
@@ -294,6 +311,13 @@ public class DashboardApiController {
 
     @GetMapping("/dashboard/reliability")
     public ResponseEntity<ReliabilityReportDto> getReliability() {
+        if (cacheService != null) {
+            return ResponseEntity.ok(cacheService.getReliability(this::computeReliability));
+        }
+        return ResponseEntity.ok(computeReliability());
+    }
+
+    public ReliabilityReportDto computeReliability() {
         MetricsSummary metricsSummary = new MetricsSummary(
                 metrics != null ? metrics.getFaultInjectionsTotal() : 0,
                 metrics != null ? metrics.getFaultDropsTotal() : 0,
@@ -308,7 +332,7 @@ public class DashboardApiController {
         );
 
         List<InvariantResult> invariants = invariantService.evaluateAllInvariants();
-        return ResponseEntity.ok(new ReliabilityReportDto(metricsSummary, invariants));
+        return new ReliabilityReportDto(metricsSummary, invariants);
     }
 
     // ------------------------------------------------------------------ Fault Controls
@@ -390,6 +414,7 @@ public class DashboardApiController {
         String ruleId = "rule-" + UUID.randomUUID().toString().substring(0, 8);
         FaultRule rule = new FaultRule(ruleId, type, src, dst, null, hash, limit, delay);
         faultInjector.addRule(rule);
+        invalidateFaultCaches();
 
         return ResponseEntity.ok(Map.of(
                 "status", "RULE_REGISTERED",
@@ -406,6 +431,7 @@ public class DashboardApiController {
 
         boolean removed = faultInjector.removeRule(faultId);
         if (removed) {
+            invalidateFaultCaches();
             return ResponseEntity.ok(Map.of("status", "RULE_DELETED", "faultId", faultId));
         } else {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Fault rule not found: " + faultId));
@@ -416,6 +442,7 @@ public class DashboardApiController {
     public ResponseEntity<?> resetFaults() {
         if (faultInjector != null) {
             faultInjector.reset();
+            invalidateFaultCaches();
         }
         return ResponseEntity.ok(Map.of("status", "FAULTS_RESET"));
     }
@@ -432,10 +459,18 @@ public class DashboardApiController {
         } else {
             faultInjector.disable();
         }
+        invalidateFaultCaches();
 
         return ResponseEntity.ok(Map.of(
                 "status", "TOGGLED",
                 "enabled", faultInjector.isEnabled()
         ));
+    }
+
+    private void invalidateFaultCaches() {
+        if (cacheService != null) {
+            cacheService.invalidateReliability();
+            cacheService.invalidateOverview();
+        }
     }
 }
