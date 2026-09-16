@@ -1,0 +1,72 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "id": null,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Online Transactions Settled",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_transactions_settled_total{type=\"online\"})", "legendFormat": "Online Settled", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "green", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "title": "Offline Transactions Settled",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_transactions_settled_total{type=\"offline\"})", "legendFormat": "Offline Settled", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "purple", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "title": "Rejected Transactions",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_transactions_rejected_total)", "legendFormat": "Rejected", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "orange", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "title": "Conflicting Transactions",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_transactions_conflicting_total)", "legendFormat": "Conflicting", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "red", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
+      "title": "Settlement Throughput by Type",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(upi_transactions_settled_total{type=\"online\"}[1m])", "legendFormat": "Online (Liquid)", "refId": "A" },
+        { "expr": "rate(upi_transactions_settled_total{type=\"offline\"}[1m])", "legendFormat": "Offline (Escrow)", "refId": "B" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
+      "title": "Rejection Breakdown by Reason",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(upi_transactions_rejected_total[1m])", "legendFormat": "{{reason}}", "refId": "A" }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["upi", "transactions"],
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "02 - UPI Transactions",
+  "uid": "upi-transactions",
+  "version": 1
+}

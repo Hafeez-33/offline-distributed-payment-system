@@ -44,6 +44,14 @@ public class InvariantAuditService {
         results.add(evaluateI11());
         results.add(evaluateI12());
 
+        if (metrics != null) {
+            for (InvariantResult r : results) {
+                if ("FAILED".equalsIgnoreCase(r.status())) {
+                    metrics.recordViolation(r.id());
+                }
+            }
+        }
+
         return results;
     }
 

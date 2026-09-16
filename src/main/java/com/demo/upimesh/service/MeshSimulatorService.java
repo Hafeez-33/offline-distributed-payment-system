@@ -36,6 +36,9 @@ public class MeshSimulatorService {
     @Autowired(required = false)
     private DashboardCacheService cacheService;
 
+    @Autowired(required = false)
+    private com.demo.upimesh.metrics.UpiMetricsService metricsService;
+
     public MeshSimulatorService() {
         seedDefaultDevices();
     }
@@ -57,6 +60,10 @@ public class MeshSimulatorService {
 
     public void setCacheService(DashboardCacheService cacheService) {
         this.cacheService = cacheService;
+    }
+
+    public void setMetricsService(com.demo.upimesh.metrics.UpiMetricsService metricsService) {
+        this.metricsService = metricsService;
     }
 
     private void seedDefaultDevices() {
@@ -88,12 +95,18 @@ public class MeshSimulatorService {
     public void severLink(String a, String b) {
         severedLinks.add(linkKey(a, b));
         log.warn("Severed mesh link between {} and {}", a, b);
+        if (metricsService != null) {
+            metricsService.recordMeshPartitionEvent();
+        }
         invalidateTopologyCache();
     }
 
     public void healLink(String a, String b) {
         severedLinks.remove(linkKey(a, b));
         log.info("Healed mesh link between {} and {}", a, b);
+        if (metricsService != null) {
+            metricsService.recordMeshHealEvent();
+        }
         invalidateTopologyCache();
     }
 
@@ -109,6 +122,9 @@ public class MeshSimulatorService {
     public void healAll() {
         severedLinks.clear();
         log.info("Healed all mesh links. Network topology fully reconnected.");
+        if (metricsService != null) {
+            metricsService.recordMeshHealEvent();
+        }
         invalidateTopologyCache();
     }
 
@@ -138,6 +154,9 @@ public class MeshSimulatorService {
         VirtualDevice sender = devices.get(senderDeviceId);
         if (sender == null) throw new IllegalArgumentException("Unknown device: " + senderDeviceId);
         sender.hold(packet);
+        if (metricsService != null) {
+            metricsService.recordMeshPacketReceived(sender.hasInternet());
+        }
         log.info("Packet {} injected at {} (TTL={}, hash={})",
                 packet.getPacketId().substring(0, Math.min(8, packet.getPacketId().length())),
                 senderDeviceId, packet.getTtl(),
@@ -187,6 +206,13 @@ public class MeshSimulatorService {
             }
         }
 
+        if (metricsService != null) {
+            metricsService.recordMeshGossipRound();
+            if (transfers > 0) {
+                metricsService.recordMeshPacketForwarded(transfers);
+            }
+        }
+
         log.info("Epidemic gossip round complete: {} packet transfers", transfers);
         return new GossipResult(transfers, snapshotMap());
     }
@@ -224,14 +250,24 @@ public class MeshSimulatorService {
                 AntiEntropyService.PairwiseSyncResult res = antiEntropyService.syncPair(d1, d2);
                 if (res.wasInSync()) {
                     sessionsInSync++;
+                    if (metricsService != null) {
+                        metricsService.recordMeshSyncRound(true, 0);
+                    }
                 } else {
                     sessionsRepaired++;
                     totalTransfers += res.totalTransfers();
+                    if (metricsService != null) {
+                        metricsService.recordMeshSyncRound(false, res.totalTransfers());
+                    }
                 }
             }
         }
 
         boolean converged = isConnectedComponentConverged(deviceList);
+        if (metricsService != null) {
+            metricsService.recordMeshConvergenceCheck(converged);
+        }
+
         log.info("Anti-entropy round complete: {} transfers, {} in-sync, {} repaired, converged={}",
                 totalTransfers, sessionsInSync, sessionsRepaired, converged);
 
@@ -286,6 +322,9 @@ public class MeshSimulatorService {
                 }
                 out.add(new BridgeUpload(d.getDeviceId(), pkt));
             }
+        }
+        if (metricsService != null && !out.isEmpty()) {
+            metricsService.recordMeshBridgeFlush();
         }
         return out;
     }

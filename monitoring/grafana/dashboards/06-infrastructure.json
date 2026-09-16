@@ -1,0 +1,78 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "id": null,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Redis Operations Total",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_infra_redis_operations_total)", "legendFormat": "Redis Ops", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "red", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "title": "Redis Fallbacks Total",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_infra_redis_fallbacks_total)", "legendFormat": "Fallbacks", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "orange", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "title": "Database Retries Total",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_infra_db_retries_total)", "legendFormat": "DB Retries", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "yellow", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "title": "Cache Hit Ratio (%)",
+      "type": "stat",
+      "targets": [{ "expr": "(sum(rate(upi_infra_cache_hits_total[5m])) / (sum(rate(upi_infra_cache_hits_total[5m])) + sum(rate(upi_infra_cache_misses_total[5m])) + 0.001)) * 100", "legendFormat": "Hit Ratio", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "green", "mode": "fixed" }, "unit": "percent" } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
+      "title": "Database Connection Pool & Retries",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "hikaricp_connections_active", "legendFormat": "Active Connections", "refId": "A" },
+        { "expr": "hikaricp_connections_idle", "legendFormat": "Idle Connections", "refId": "B" },
+        { "expr": "hikaricp_connections_pending", "legendFormat": "Pending Connections", "refId": "C" },
+        { "expr": "rate(upi_infra_db_retries_total[1m])", "legendFormat": "DB Retry Rate/s", "refId": "D" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
+      "title": "Redis Operations vs Fallbacks",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(upi_infra_redis_operations_total[1m])", "legendFormat": "Redis Ops/s", "refId": "A" },
+        { "expr": "rate(upi_infra_redis_failures_total[1m])", "legendFormat": "Redis Failures/s", "refId": "B" },
+        { "expr": "rate(upi_infra_redis_fallbacks_total[1m])", "legendFormat": "Redis Fallbacks/s", "refId": "C" },
+        { "expr": "rate(upi_infra_cache_hits_total[1m])", "legendFormat": "Cache Hits/s", "refId": "D" },
+        { "expr": "rate(upi_infra_cache_misses_total[1m])", "legendFormat": "Cache Misses/s", "refId": "E" }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["upi", "infrastructure", "postgres", "redis", "hikari"],
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "06 - UPI Infrastructure",
+  "uid": "upi-infrastructure",
+  "version": 1
+}
