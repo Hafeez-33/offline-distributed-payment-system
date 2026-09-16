@@ -892,6 +892,21 @@ The cryptography, idempotency, and offline escrow state machine code is essentia
 
 ---
 
+## Phase 9.4 — Android BLE Mesh Gossip & Anti-Entropy Layer
+
+The Android BLE mesh layer (`:core-mesh`) coordinates with `:core-transport`, `:core-database`, and `:core-crypto` to replicate encrypted payment packets peer-to-peer without internet connectivity.
+
+### Core Guarantees & Non-Goals
+* **Authoritative Identity:** `packetHash = SHA-256(ciphertext)` is the single authoritative packet identifier.
+* **Deterministic State Digest:** Lexicographically sorted canonical SHA-256 concatenation of `packetHash` values (`SHA-256("EMPTY")` if empty).
+* **16 Prefix-Bucket Checksums:** Partitions hashes by their first 4 bits (`0..f`) to detect and isolate divergent buckets in $O(1)$ exchange.
+* **Pairwise Anti-Entropy Flow:** `STATE_SUMMARY` $\to$ `BUCKET_CHECKSUMS` $\to$ `BUCKET_HASH_EXCHANGE` $\to$ set-difference $\to$ bounded `SYNC_REQUEST` batches ($\le 50$ packets) $\to$ `SYNC_ACK`.
+* **TTL-Limited Epidemic Push:** Decrements TTL on each hop; halts epidemic push when `ttl == 0`. (Anti-entropy discovery remains unaffected by TTL).
+* **Financial Authority Boundary:** The mesh layer is strictly an untrusted replication transport. Receiving a packet locally never increments `settledAmountPaisa` and never modifies offline wallet balances. PostgreSQL and Spring Boot remain the sole financial authorities.
+* **Fundamental Principle:** *"Anti-entropy provides eventual state convergence between reachable peers; it does not provide distributed financial consensus."*
+
+---
+
 ## Honest limitations of the concept & Software vs Hardware Boundary
 
 Let's be completely transparent about the security boundary:

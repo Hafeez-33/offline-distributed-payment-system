@@ -1662,7 +1662,74 @@ The `StartupRecoveryManager`:
 
 ---
 
-# 23. Important Disclaimer
+# 23. Phase 9.4 — Android BLE Mesh Gossip & Anti-Entropy Synchronization Layer
+
+## 23.1 Core Architecture & Synchronization Boundary
+* **Hybrid Synchronization:** Combines TTL-limited epidemic push (fast forward propagation) with pairwise anti-entropy pull (eventual convergence across reachable devices).
+* **Authoritative Packet Identity:** Cryptographic hash `packetHash = SHA-256(ciphertext)`. Used exclusively for deduplication, state digests, bucket checksums, set-difference calculation, and synchronization requests.
+* **No Financial Authority Mutation:** The mesh synchronization layer is strictly an untrusted peer-to-peer data replication transport. Spring Boot and PostgreSQL remain the sole authoritative arbiters of wallet balances, monotonic counters, and settlement receipts. Local mesh replication never increments `settledAmountPaisa` or creates synthetic settlement approvals.
+* **Core Distinction:** "Anti-entropy provides eventual state convergence between reachable peers; it does not provide distributed financial consensus."
+
+## 23.2 Deterministic State Digest Algorithm
+* **Empty Collection:** `SHA-256("EMPTY")`.
+* **Populated Collection:** All lowercase 64-character hex `packetHash` strings are normalized, deduplicated, sorted in canonical lexicographical order, concatenated with newline (`\n`) delimiters, and hashed via SHA-256.
+* **Independence:** Independent of Room row insertion order, JVM iteration order, and platform endianness. Identical sets of packets produce identical 32-byte digests on all devices.
+
+## 23.3 16 Prefix-Bucket Divergence Isolation
+* **Prefix Slicing:** Partitions packet hashes into exactly 16 buckets ($0..15$) based on the first 4 bits (`0..f`) of `packetHash`.
+* **Bucket Checksum:** Computed from lexicographically sorted hashes in that bucket (or `SHA-256("EMPTY")` if empty).
+* **Fast Divergence Detection:** Peers exchange 16 bucket checksums to pinpoint divergent slices without transmitting entire hash catalogs.
+
+## 23.4 Pairwise Anti-Entropy State Machine & Session Flow
+```text
+1. HELLO exchanged upon BLE connection
+2. Local STATE_SUMMARY generated & exchanged
+3. If digests match -> session completes immediately (O(1) exit)
+4. If digests differ -> exchange BUCKET_CHECKSUMS (16 buckets)
+5. Identify divergent buckets -> exchange hashes for divergent buckets only
+6. Compute symmetric set difference:
+   missingLocally = remoteHashes - localHashes
+   missingRemotely = localHashes - remoteHashes
+7. Emit bounded SYNC_REQUEST (max 50 packets per batch)
+8. Stream packets over BLE transport -> verify SHA-256(ciphertext) == packetHash
+9. Idempotent storage into Room ReceivedPacketDao (OnConflictStrategy.IGNORE)
+10. Complete session with SYNC_ACK
+```
+
+## 23.5 TTL-Limited Epidemic Push Gossip
+* **TTL Rules:** `ttl` decrements on each forward hop; `hopCount` increments.
+* **Push Expiry:** When `ttl == 0`, epidemic push forwarding halts. (Anti-entropy discovery remains fully available regardless of TTL).
+* **Bounded Fan-Out:** Maximum 3 target connected peers.
+* **Loop Suppression:** Never forwards back to the immediate source peer.
+* **Deduplication:** Uses a bounded cache to prevent repeated broadcasts to the same peer.
+
+## 23.6 Resource Boundaries & Concurrency Limits
+* **Maximum Concurrent Mesh Sessions:** 8
+* **Maximum Connected Peers:** 4
+* **Maximum Synchronization Batch Size:** 50 packets
+* **Control Message Payload Size:** $\le 1024$ bytes
+
+## 23.7 Verification Results
+* **Android Test Suite:** 122 tests passing (100% green).
+  - `:core-crypto`: 15 tests
+  - `:core-database`: 29 tests
+  - `:core-transport`: 35 tests
+  - `:core-mesh`: 43 tests
+    * `StateDigestBuilderTest` (5 tests)
+    * `BucketChecksumBuilderTest` (5 tests)
+    * `SetDifferenceCalculatorTest` (4 tests)
+    * `SyncBatchPlannerTest` (5 tests)
+    * `MeshSyncStateMachineTest` (5 tests)
+    * `GossipForwarderTest` (5 tests)
+    * `MeshSynchronizerIntegrationTest` (4 tests)
+    * `PartitionHealConvergenceTest` (2 tests)
+    * `MeshEngineConcurrencyAndLimitsTest` (5 tests)
+    * `MeshReceiptAndSecurityTest` (3 tests)
+* **Backend Java Tests:** 139 tests passing (100% green).
+
+---
+
+# 24. Important Disclaimer
 
 This is an engineering/research prototype inspired by offline digital payment concepts.
 
@@ -1674,4 +1741,5 @@ It is NOT:
 * A guarantee of real-world offline monetary settlement
 
 All security and consistency claims must be limited to what is actually implemented and experimentally verified.
+
 
