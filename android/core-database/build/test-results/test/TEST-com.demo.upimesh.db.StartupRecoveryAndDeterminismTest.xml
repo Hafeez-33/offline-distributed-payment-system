@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.demo.upimesh.db.StartupRecoveryAndDeterminismTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-09-16T06:03:33" hostname="M-HAFEEZ" time="1.839">
+  <properties/>
+  <testcase name="testSimulatedCrashBeforeTransportKeepsPaymentReadyForTransport()" classname="com.demo.upimesh.db.StartupRecoveryAndDeterminismTest" time="0.317"/>
+  <testcase name="testRestartOfCreatedPaymentPreservesExactIntentFields()" classname="com.demo.upimesh.db.StartupRecoveryAndDeterminismTest" time="0.278"/>
+  <testcase name="testExpiredWalletMarkedOnStartup()" classname="com.demo.upimesh.db.StartupRecoveryAndDeterminismTest" time="0.262"/>
+  <testcase name="testStalePacketFragmentsPurgedOnStartup()" classname="com.demo.upimesh.db.StartupRecoveryAndDeterminismTest" time="0.146"/>
+  <testcase name="testRestartOfEncryptedPaymentPreservesExactCiphertextAndHash()" classname="com.demo.upimesh.db.StartupRecoveryAndDeterminismTest" time="0.508"/>
+  <testcase name="testNoRecoveryPathCreatesSecondLogicalPayment()" classname="com.demo.upimesh.db.StartupRecoveryAndDeterminismTest" time="0.322"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

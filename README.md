@@ -767,6 +767,52 @@ Phase 9.1 establishes deterministic cryptographic interoperability between the J
 
 ---
 
+## Phase 9.2: Android Room Persistence + Offline Wallet Engine
+
+Phase 9.2 implements durable local persistence for Android clients under `:core-database` using Kotlin, AndroidX Room architecture, and Android Keystore master key protection.
+
+### Architectural Principle: Local Cache vs Authoritative Ledger
+> [!IMPORTANT]
+> **LOCAL CACHE GUARANTEE**:
+> **Android local state is a durable execution/replication cache. PostgreSQL remains the authoritative financial ledger.**
+> The Android client never claims authoritative balance, final settlement, global idempotency, or dispute arbitration.
+
+### Key Architectural Invariants
+1. **Paisa Integer Currency Standard:**
+   - All monetary values are stored strictly as `Long` integer paisa (₹1.00 = `100L`, ₹1,500.00 = `150000L`). Floating-point types (`Float`, `Double`) are prohibited.
+2. **Local vs Authoritative Settlement:**
+   - `allocatedAmountPaisa`: Granted offline spending limit.
+   - `remainingAmountPaisa`: Available spendable allowance (`allocated - localSpent`). Decremented upon local spend.
+   - `localSpentAmountPaisa`: Locally committed spend total. Incremented upon local spend.
+   - `settledAmountPaisa`: Authoritative settlement total. **NEVER** incremented on local spend; updated **ONLY** upon receiving and verifying a backend `SettlementReceipt`.
+3. **Android Keystore Protection & Memory Hygiene:**
+   - Device Ed25519 private keys are encrypted at rest using AES-256-GCM under master key alias `upi_mesh_master_key`.
+   - The master key is non-exportable from Keystore hardware.
+   - Sensitive byte arrays undergo best-effort RAM zeroization upon completion of cryptographic operations.
+4. **Room Entity Schema:**
+   - `DeviceIdentity` (`device_identities`): Device enrollment, public key, encrypted private key, IV.
+   - `OfflineWallet` (`offline_wallets`): Wallet escrow, counters, status, certificate JSON.
+   - `OutboundPayment` (`outbound_payments`): Immutable intent, counter, ciphertext, packetHash, controlled states (`CREATED`, `ENCRYPTED`, `READY_FOR_TRANSPORT`, `PENDING_BRIDGE`, `SETTLEMENT_CONFIRMED`, `REJECTED`, `CONFLICTING`, `EXPIRED`).
+   - `ReceivedPacket` (`received_packets`): Ingestion, local deduplication optimization on `packetHash`.
+   - `PacketFragment` (`packet_fragments`): Composite key `(packetHash, chunkIndex)`, data blob, reassembly operations.
+   - `SettlementReceipt` (`settlement_receipts`): Authoritative receipt verified with Ed25519 before persistence.
+5. **Atomic Payment Creation:**
+   - Single Room/SQLite transaction executes: validate wallet $\to$ validate counter $\to$ validate allowance $\to$ advance counter $\to$ update local balances $\to$ persist immutable intent (`CREATED`) $\to$ sign canonical `v3_tx` $\to$ hybrid-encrypt with server RSA key $\to$ compute `packetHash` $\to$ mark `READY_FOR_TRANSPORT` $\to$ commit.
+6. **Deterministic Startup Recovery (`StartupRecoveryManager`):**
+   - `CREATED` payments resume preparation using persisted immutable intent without regenerating `nonce` or `sequenceCounter`.
+   - `ENCRYPTED` payments verify hash consistency and transition to `READY_FOR_TRANSPORT`.
+   - `READY_FOR_TRANSPORT`, `PENDING_BRIDGE`, and `SETTLEMENT_CONFIRMED` are preserved exactly.
+   - No recovery path ever creates a second logical payment or duplicates sequence numbers.
+   - Stale fragments older than TTL window (24h) are purged automatically.
+7. **Versioned Migrations:**
+   - Incremental migrations (`Migration1To2`) without destructive fallback.
+
+### Verification Results
+* **Android Test Suite:** 44 tests passing (15 in `:core-crypto` + 29 in `:core-database`).
+* **Backend Java Tests:** 139 tests passing (100% green).
+
+---
+
 ## What's NOT real (and what would change for production)
 
 This is a teaching demo. To make it production-grade you'd swap these things:

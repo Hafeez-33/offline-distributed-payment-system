@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.demo.upimesh.db.DatabaseMigrationTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-09-16T06:02:46" hostname="M-HAFEEZ" time="41.06">
+  <properties/>
+  <testcase name="testMissingMigrationPathThrowsExceptionWithoutDestructiveFallback(File)" classname="com.demo.upimesh.db.DatabaseMigrationTest" time="40.998"/>
+  <testcase name="testInitialDatabaseVersionIsOne()" classname="com.demo.upimesh.db.DatabaseMigrationTest" time="0.008"/>
+  <testcase name="testMigrationFromV1ToV2PreservesData(File)" classname="com.demo.upimesh.db.DatabaseMigrationTest" time="0.051"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+]]></system-err>
+</testsuite>

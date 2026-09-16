@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.demo.upimesh.db.SettlementReceiptAndAuthorityTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-09-16T06:03:31" hostname="M-HAFEEZ" time="1.32">
+  <properties/>
+  <testcase name="testNoFalseAuthorityGuarantees()" classname="com.demo.upimesh.db.SettlementReceiptAndAuthorityTest" time="0.232"/>
+  <testcase name="testInvalidOrForgedReceiptSignatureIsRejectedWithoutPersisting()" classname="com.demo.upimesh.db.SettlementReceiptAndAuthorityTest" time="0.667"/>
+  <testcase name="testBackendSettlementReceiptIsTheOnlyTransitionThatUpdatesSettledAmount()" classname="com.demo.upimesh.db.SettlementReceiptAndAuthorityTest" time="0.418"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

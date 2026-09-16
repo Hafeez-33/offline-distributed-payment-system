@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.demo.upimesh.crypto.CertificateAndReceiptVerificationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-16T04:52:45" hostname="M-HAFEEZ" time="0.753">
+<testsuite name="com.demo.upimesh.crypto.CertificateAndReceiptVerificationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-09-16T06:02:33" hostname="M-HAFEEZ" time="0.729">
   <properties/>
-  <testcase name="testJavaIssuedCertificateVerificationInKotlin()" classname="com.demo.upimesh.crypto.CertificateAndReceiptVerificationTest" time="0.747"/>
-  <testcase name="testJavaIssuedReceiptVerificationInKotlin()" classname="com.demo.upimesh.crypto.CertificateAndReceiptVerificationTest" time="0.005"/>
+  <testcase name="testJavaIssuedCertificateVerificationInKotlin()" classname="com.demo.upimesh.crypto.CertificateAndReceiptVerificationTest" time="0.72"/>
+  <testcase name="testJavaIssuedReceiptVerificationInKotlin()" classname="com.demo.upimesh.crypto.CertificateAndReceiptVerificationTest" time="0.008"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

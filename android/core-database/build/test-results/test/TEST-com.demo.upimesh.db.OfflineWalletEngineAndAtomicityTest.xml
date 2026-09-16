@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.demo.upimesh.db.OfflineWalletEngineAndAtomicityTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-09-16T06:03:28" hostname="M-HAFEEZ" time="3.392">
+  <properties/>
+  <testcase name="testExpiredWalletPreventsLocalSpend()" classname="com.demo.upimesh.db.OfflineWalletEngineAndAtomicityTest" time="1.479"/>
+  <testcase name="testSelfSpendAndUnauthorizedSpenderRejected()" classname="com.demo.upimesh.db.OfflineWalletEngineAndAtomicityTest" time="0.137"/>
+  <testcase name="testLocalPaymentCreationDoesNotIncreaseSettledAmountAndDecreasesRemainingAllowance()" classname="com.demo.upimesh.db.OfflineWalletEngineAndAtomicityTest" time="0.733"/>
+  <testcase name="testCounterRollbackRejection()" classname="com.demo.upimesh.db.OfflineWalletEngineAndAtomicityTest" time="0.47"/>
+  <testcase name="testEscrowExhaustionRejection()" classname="com.demo.upimesh.db.OfflineWalletEngineAndAtomicityTest" time="0.143"/>
+  <testcase name="testDisputedWalletRejectsLocalSpend()" classname="com.demo.upimesh.db.OfflineWalletEngineAndAtomicityTest" time="0.118"/>
+  <testcase name="testSubsequentSpendIncrementsSequenceAndAccumulatesLocalSpend()" classname="com.demo.upimesh.db.OfflineWalletEngineAndAtomicityTest" time="0.301"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
