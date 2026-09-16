@@ -1479,7 +1479,93 @@ Phase 9.1 implements deterministic cross-language cryptographic interoperability
 
 ---
 
-# 21. Important Disclaimer
+# 21. Phase 9.2 — Android Room Persistence + Offline Wallet Engine (COMPLETED)
+
+### 21.1 Architectural Principle
+> [!IMPORTANT]
+> **LOCAL EXECUTION CACHE VS AUTHORITATIVE LEDGER**:
+> Android local state is a durable execution/replication cache. PostgreSQL remains the authoritative financial ledger.
+> The Android client never claims authoritative balance, final settlement, global idempotency, or dispute arbitration.
+
+### 21.2 Currency Unit Standard
+All monetary values in `:core-database` entities, DAOs, and engines are stored and manipulated strictly as **`Long` integer paisa** (₹1.00 = `100L`, ₹1,500.00 = `150000L`). Floating-point types (`Float`, `Double`) are prohibited for financial calculations.
+
+### 21.3 Local Settlement Semantics & Escrow Terminology
+Local payment creation is a pending offline intent; authoritative settlement occurs only at PostgreSQL.
+* `allocatedAmountPaisa`: Total offline spending allowance granted by the backend.
+* `remainingAmountPaisa`: Spendable local allowance (`allocatedAmountPaisa - localSpentAmountPaisa`). Decremented upon local spend.
+* `localSpentAmountPaisa`: Cumulative offline spends committed locally on this device. Incremented upon local spend.
+* `settledAmountPaisa`: Authoritative settled amount. **NEVER** incremented by local offline spend. It is updated **ONLY** when a cryptographically verified backend `SettlementReceipt` arrives.
+
+### 21.4 Key Storage Architecture & Memory Hygiene
+* **Master Key:** Android Keystore AES-256-GCM under stable alias `upi_mesh_master_key`.
+* **Encrypted at Rest:** Device Ed25519 private keys are encrypted at rest with random 12-byte IV and 128-bit authentication tag.
+* **Non-Exportable:** Master key cannot be exported from hardware security module / KeyStore.
+* **Memory Hygiene:** Best-effort RAM zeroization is applied to sensitive byte arrays (`Arrays.fill(data, 0.toByte())`) upon completion of cryptographic operations. (Documented as best-effort memory hygiene due to runtime garbage collection).
+
+### 21.5 Room Entity Schema & Indexes
+1. `DeviceIdentity` (`device_identities`):
+   - PK: `deviceId: String`
+   - Indexed: `owner_vpa`
+   - Fields: `publicKey`, `encryptedPrivateKey`, `encryptionIv`, `enrollmentState`, `createdAt`, `updatedAt`
+2. `OfflineWallet` (`offline_wallets`):
+   - PK: `walletId: String`
+   - Indexed: `owner_vpa`
+   - Fields: `ownerPublicKey`, `allocatedAmountPaisa`, `localSpentAmountPaisa`, `settledAmountPaisa`, `remainingAmountPaisa`, `sequenceCounter`, `walletEpoch`, `validFrom`, `validUntil`, `certificateJson`, `status`, `updatedAt`
+   - States: `ACTIVE`, `EXPIRED`, `LOCKED_DISPUTED`, `AUDIT_REQUIRED`, `RECONCILED_CLOSED`, `PENDING_RECONCILE`
+3. `OutboundPayment` (`outbound_payments`):
+   - PK: `paymentId: String` (UUID)
+   - Indexed: `wallet_id`, unique composite `(wallet_id, sequence_counter)`, `packet_hash`
+   - Fields: `amountPaisa`, `cumulativeAmountPaisa`, `receiverVpa`, `nonce`, `packetHash`, `ciphertext`, `state`, `createdAt`, `updatedAt`, `retryCount`
+   - States: `CREATED`, `ENCRYPTED`, `READY_FOR_TRANSPORT`, `PENDING_BRIDGE`, `SETTLEMENT_CONFIRMED`, `REJECTED`, `CONFLICTING`, `EXPIRED`
+4. `ReceivedPacket` (`received_packets`):
+   - PK: `packetHash: String`
+   - Fields: `packetId`, `ciphertext`, `ttl`, `hopCount`, `receivedAt`, `uploadedToBridge`, `status`, `updatedAt`
+   - Invariant: Local duplicate rejection optimization.
+5. `PacketFragment` (`packet_fragments`):
+   - Composite PK: `(packetHash, chunkIndex)`
+   - Indexed: `packet_hash`
+   - Fields: `totalChunks`, `data: ByteArray`, `receivedAt`
+6. `SettlementReceipt` (`settlement_receipts`):
+   - PK: `transactionId: Long`
+   - Indexed: `packet_hash`
+   - Fields: `counter`, `status`, `settledAt`, `serverSignature`
+   - Rule: Signature verified before storage.
+
+### 21.6 Atomic Payment Creation Semantics
+A single atomic database transaction performs:
+1. Validate wallet (owner matches, active status, unexpired).
+2. Validate counter (`nextCounter == sequenceCounter + 1`, no rollback).
+3. Validate remaining allowance (`remainingAmountPaisa >= amountPaisa`).
+4. Update wallet balances (`remainingAmountPaisa -= amountPaisa`, `localSpentAmountPaisa += amountPaisa`, `sequenceCounter++`).
+5. Insert `OutboundPayment` with immutable intent data in `CREATED` state.
+6. Generate canonical `v3_tx`, sign with decrypted device Ed25519 key, hybrid-encrypt payload with server RSA key, compute `packetHash`.
+7. Update `OutboundPayment` with `ciphertext`, `packetHash`, and state `READY_FOR_TRANSPORT`.
+8. Commit transaction. Only committed payments are eligible for subsequent transport.
+
+### 21.7 Deterministic Restart & Crash Recovery
+The `StartupRecoveryManager`:
+* `CREATED`: Resumes preparation from persisted immutable intent without altering `nonce`, `sequenceCounter`, `amountPaisa`, or `receiverVpa`.
+* `ENCRYPTED`: Verifies `packetHash == SHA-256(ciphertext)` and transitions to `READY_FOR_TRANSPORT`.
+* `READY_FOR_TRANSPORT`, `PENDING_BRIDGE`, `SETTLEMENT_CONFIRMED`: Preserved exactly.
+* `REJECTED`, `CONFLICTING`, `EXPIRED`: Preserved as terminal states.
+* **No Regeneration:** No recovery path ever creates a second logical payment or duplicates sequence numbers.
+* **Fragment Hygiene:** Purges stale packet fragments older than TTL window (24 hours).
+
+### 21.8 Verification Results
+* **Android Test Suite:** 44 tests passing (15 in `:core-crypto` + 29 in `:core-database`).
+  - `RoomDaoAndPersistenceTest` (5 tests): CRUD, paisa enforcement, deduplication, composite keys, process restart file reload.
+  - `DatabaseMigrationTest` (3 tests): v1 schema creation, v1 to v2 migration, non-destructive migration guarantee.
+  - `KeyStoreManagerTest` (3 tests): AES-256-GCM roundtrip, tamper detection, best-effort zeroization.
+  - `OfflineWalletEngineAndAtomicityTest` (7 tests): Atomic commit, Test A (settledAmount untouched), Test B (remaining allowance decreased), sequence rollback rejection, escrow exhaustion, expired wallet rejection, self-spend/unauthorized spender rejection.
+  - `StartupRecoveryAndDeterminismTest` (6 tests): Test C (exact intent preserved on restart), Test D (ciphertext/hash preserved), Test E (no duplicate logical payments), crash before transport survival, stale fragment purge, startup expired wallet detection.
+  - `SettlementReceiptAndAuthorityTest` (3 tests): Test F (receipt is only transition updating settledAmount), forged receipt rejection, No False Authority guarantees.
+  - `ObservabilityMetricsTest` (2 tests): Counters and bounded labels.
+* **Backend Java Tests:** 139 tests passing (100% green).
+
+---
+
+# 22. Important Disclaimer
 
 This is an engineering/research prototype inspired by offline digital payment concepts.
 
