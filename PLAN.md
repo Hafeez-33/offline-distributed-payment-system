@@ -1454,7 +1454,32 @@ The objective is to demonstrate how a secure distributed system can maintain tru
 
 ---
 
-# 20. Important Disclaimer
+# 20. Phase 9.1 — Cross-Language Cryptographic Compatibility (COMPLETED)
+
+### 20.1 Purpose & Scope
+Phase 9.1 implements deterministic cross-language cryptographic interoperability between the Java 17 Spring Boot backend and the Kotlin Android peripheral library (`:core-crypto`).
+
+### 20.2 Strict Security Notice: Test-Only Deterministic Fixtures
+> [!IMPORTANT]
+> **TEST-ONLY CRYPTOGRAPHIC FIXTURES**:
+> All keys, signatures, and envelopes defined in `upi_crypto_test_vectors_v1.json` are generated from deterministic PRNG seeds solely for automated cross-language verification.
+> 1. **Location Isolation:** Test vector files exist **ONLY** under `src/test/resources/` and `android/core-crypto/src/test/resources/`.
+> 2. **No Production Linkage:** Production source under `src/main/` and `android/**/src/main/` never imports, references, loads, or packages these test keys or vectors.
+> 3. **Non-Production Keys:** These keys must **never** be used in production environments. Production deployments require hardware-backed Keystore/StrongBox keys and KMS/HSM server keys.
+
+### 20.3 Interoperability Guarantee & Test Vectors
+* **Canonicalization:** Byte-for-byte UTF-8 string identity for `v1`, `v3_tx`, `v1_cert`, and `v1_receipt`.
+* **Ed25519 Interoperability:** Java signs $\to$ Kotlin verifies; Kotlin signs $\to$ Java verifies (exact 64-byte RFC 8032 signatures).
+* **Hybrid Envelope Interoperability:** Android-generated envelopes (RSA-2048-OAEP SHA-256/MGF1-SHA-256 + AES-256-GCM 12-byte IV + 128-bit tag) unpack and decrypt cleanly in Java `HybridCryptoService`.
+* **Content Identity:** `packetHash` SHA-256 generates identical 64-character lowercase hexadecimal digests.
+
+### 20.4 Verification Suite
+* **Backend Java Tests:** 139 tests passing (129 Phase 1–8 tests + 10 cross-language compatibility tests in `CrossLanguageCryptoCompatibilityTest`).
+* **Android Kotlin Tests:** 15 unit tests passing in `core-crypto` (covering canonicalization, Ed25519, cert/receipt verification, hybrid encryption, and packet hashing).
+
+---
+
+# 21. Important Disclaimer
 
 This is an engineering/research prototype inspired by offline digital payment concepts.
 
@@ -1466,3 +1491,4 @@ It is NOT:
 * A guarantee of real-world offline monetary settlement
 
 All security and consistency claims must be limited to what is actually implemented and experimentally verified.
+

@@ -747,6 +747,26 @@ http://localhost:9090
 
 ---
 
+## Phase 9.1: Cross-Language Cryptographic Compatibility
+
+Phase 9.1 establishes deterministic cryptographic interoperability between the Java Spring Boot backend and the Kotlin Android peripheral library (`:core-crypto`).
+
+### Strict Security Notice: Test-Only Cryptographic Fixtures
+> [!IMPORTANT]
+> **TEST-ONLY CRYPTOGRAPHIC FIXTURES**:
+> All cryptographic keys, signatures, and envelopes defined in `upi_crypto_test_vectors_v1.json` are generated from deterministic PRNG seeds solely for automated cross-language verification.
+> 1. **Location Isolation:** Test vector files exist **ONLY** under `src/test/resources/` and `android/core-crypto/src/test/resources/`.
+> 2. **No Production Linkage:** Production source code under `src/main/` and `android/**/src/main/` never imports, references, loads, or packages these test keys or vectors.
+> 3. **Non-Production Keys:** These keys must **never** be used in production environments. Production deployments require hardware-backed Keystore/StrongBox keys and KMS/HSM server keys.
+
+### Interoperability & Golden Vectors
+- **Canonicalization:** Byte-for-byte UTF-8 string identity for `v1`, `v3_tx`, `v1_cert`, and `v1_receipt`.
+- **Ed25519 Interoperability:** Java signs $\to$ Kotlin verifies; Kotlin signs $\to$ Java verifies (exact 64-byte RFC 8032 signatures).
+- **Hybrid Envelope Interoperability:** Android-generated envelopes (RSA-2048-OAEP SHA-256/MGF1-SHA-256 + AES-256-GCM 12-byte IV + 128-bit tag) unpack and decrypt cleanly in Java `HybridCryptoService`.
+- **Content Identity:** `packetHash` SHA-256 generates identical 64-character lowercase hexadecimal digests.
+
+---
+
 ## What's NOT real (and what would change for production)
 
 This is a teaching demo. To make it production-grade you'd swap these things:

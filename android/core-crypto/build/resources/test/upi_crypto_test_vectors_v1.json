@@ -1,0 +1,182 @@
+{
+  "version" : "1.0.0",
+  "description" : "Deterministic cross-language test vectors for UPI Without Internet Phase 9.1",
+  "keys" : {
+    "ed25519" : {
+      "sender" : {
+        "publicKeyX509Base64" : "MCowBQYDK2VwAyEA3fyJgA8TINIQi0JOBGCGklNJGLVcpHIkOmk1DBJzVMo=",
+        "privateKeyPkcs8Base64" : "MC4CAQAwBQYDK2VwBCIEIBvg6yc6LGxsHS2Vb5dW+C0otL1Wo/d+8P/dVgf4XUSO"
+      },
+      "issuer" : {
+        "publicKeyX509Base64" : "MCowBQYDK2VwAyEAqUmtky57ZxVHl2qdtyUdKg63bGKhHHS/P/EZWakw5ac=",
+        "privateKeyPkcs8Base64" : "MC4CAQAwBQYDK2VwBCIEIFsxRR9HI+j28noiy/jj5b4sdgg0yMWNWOLkia1KnsFY"
+      },
+      "device" : {
+        "publicKeyX509Base64" : "MCowBQYDK2VwAyEA9EMRgZZmB7qfPn1pHxh6Eq9x4RrV5EFjwwAvv5QUljA=",
+        "privateKeyPkcs8Base64" : "MC4CAQAwBQYDK2VwBCIEINy92k4GkzChC92tqawjjuoVGQfFt0nhXO7XUA/t6EBB"
+      }
+    },
+    "rsa" : {
+      "server" : {
+        "publicKeyX509Base64" : "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1MfJv8iQ59YR3hrP2YUFAibqa1Cgo+zBNnJ5h0RVDLHMkD77SNSnk/Yyll/L6b/1rGDo1OjhyTi+rGLzy/QcNggUWHpA8F7ojDpnh4XpDRkx9slRyGHfMZ6oR2zR5RiIAdmtE+FU431ksUlrpPqKp6C0dF3hS01ZmcEjRUEvTSuJ2KLzL2lVHa1VwwVTaZMwPIqTqThLTtg1+2J3hOv1kbgIgA6Ttbw3GfxdrsmF+A06YBppW909TCLqb65ddPUsjwNDDKIDBWjfYNemuMyyVx+WKIeSyc9c98TxB1Epd3VkEJ4bJVE1n2FaQUPT/IU7tOZSl8YFlXwrlF3n38n2/wIDAQAB",
+        "privateKeyPkcs8Base64" : "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDUx8m/yJDn1hHeGs/ZhQUCJuprUKCj7ME2cnmHRFUMscyQPvtI1KeT9jKWX8vpv/WsYOjU6OHJOL6sYvPL9Bw2CBRYekDwXuiMOmeHhekNGTH2yVHIYd8xnqhHbNHlGIgB2a0T4VTjfWSxSWuk+oqnoLR0XeFLTVmZwSNFQS9NK4nYovMvaVUdrVXDBVNpkzA8ipOpOEtO2DX7YneE6/WRuAiADpO1vDcZ/F2uyYX4DTpgGmlb3T1MIupvrl109SyPA0MMogMFaN9g16a4zLJXH5Yoh5LJz1z3xPEHUSl3dWQQnhslUTWfYVpBQ9P8hTu05lKXxgWVfCuUXeffyfb/AgMBAAECggEADy96UAQbMgMpP53P6KO20Z+qX4yfsk3oFMqDBCrVxl6oDUFZbf9d6FA2mFxvhpf1tgmChF4MbcUYIosQqs/EoFHfoILfwJKIFn3n5phMI2xWuwNEzBVkDZFXoXqm2NVGhkSdNraATZik3NwzC6alH5p3Vni0EUuMvKLihq5EwcUwvGsUrMwdkKU29t9pFD5sKYMapL1/OSNZ3QhJPwQikN7aWdr3GQWb2DuD9f2Rw1awjNIJpqalfx9xTFoPKkIvdZhDFJUEdVInMV1TZsoofSt0NfT1frawE285CXfxeRnZauvcCM40wRG+hssQjJgqIabnBFcjaZ2Nv35tMQgkYQKBgQDVPHYF9Jb8I2H/rAdBAla1+DJH2P9yIqZ6EJnuNJsMjc3OefwumgYofyhgkuYbIP4DgTB361jM72PXdRsDSdxD/EjIYVxM13+6rXIOaj9tW9lbwgUv8+DPm8MGm4qSbRoBrOxr4+YQZk6BUJibyuECyEKCuGy1N5IXaaQcD09TIQKBgQD/c+29hHyh7tbt6HK0GzzuA8MxNki9zq+x8+ptyMPD12uwEtNoZvDbl5/qvs/BA8CYVUx07XfHNdx4eduw/ty3bx74Zstzsgz79/WTjpGwCqFd5CRUDqKoIsj1GhYae1HEtEipXymUdr2cuw1IuVe8zDee+1GOI3XXIsn1u9gmHwKBgDhcNK26SjX2fC6Bn6E1JwoNwexvlITsV6gnvyfQy7JzwJP0dg0zNLF7eoacDSnafIkcmlz33Y69L1yBXVRvL0Lg6bPc1/KPevkyYtUgjAcxoa+5Bnn4MdFt0AxtDCFLqPYMaKjToblv8QwI620yIGsF116JtGHpgDmj+HZaLZNBAoGBAJ40oexZfQac8Kdu6nr404dk9SIpSGuk8dL4CRvs1rEXXS4yupNSDaEyCmxLuEcFl+XADhXsa94IUX6bmZ/Id9FzFG8q2p3Qi5IRQxoblca9DqsjfAxC9CHFSUfi3AWSklWMgePDd/DmiQ/kGJoNj3Tx1RC0/RFWjMisVv/FUlxpAoGAKcI9It7Yun915zJdutEA709e3cTGsVjqWNhRP4I+rtY7vt9aHxups8Y2fqOyNVyWhEhGV1NjmvJ6j3p2kNUXwSuJPx7wyab4kPJbGU0L1nQqfFUJGH+iZwJockXPajCHyXKIUF2OV+pLBkxLxN4cNgw3mH7zER7RNnc4iGcBCjE="
+      }
+    }
+  },
+  "canonicalization_and_signatures" : {
+    "v1_transactions" : [ {
+      "id" : "v1_standard",
+      "senderVpa" : "alice@demo",
+      "receiverVpa" : "bob@demo",
+      "amount" : "100.50",
+      "nonce" : "550e8400-e29b-41d4-a716-446655440000",
+      "signedAt" : 1726480800000,
+      "expectedCanonicalString" : "v1|sender=alice@demo|receiver=bob@demo|amount=100.50|nonce=550e8400-e29b-41d4-a716-446655440000|signedAt=1726480800000",
+      "expectedCanonicalBytesHex" : "76317c73656e6465723d616c6963654064656d6f7c72656365697665723d626f624064656d6f7c616d6f756e743d3130302e35307c6e6f6e63653d35353065383430302d653239622d343164342d613731362d3434363635353434303030307c7369676e656441743d31373236343830383030303030",
+      "signerKey" : "sender",
+      "expectedSignatureBase64" : "ttrjFTZ9ppEXs58iDX1y9W7lw25Opo+bIuCqlMPkB8+LF+4i5gfMvZA18H1H+AiMEc5KlF58aNectvVIAKXPDw=="
+    }, {
+      "id" : "v1_trim_case_and_scale",
+      "senderVpa" : "  ALICE@DEMO  ",
+      "receiverVpa" : "  Bob@demo  ",
+      "amount" : "500",
+      "nonce" : "550E8400-E29B-41D4-A716-446655440001",
+      "signedAt" : 1726480800000,
+      "expectedCanonicalString" : "v1|sender=alice@demo|receiver=bob@demo|amount=500.00|nonce=550e8400-e29b-41d4-a716-446655440001|signedAt=1726480800000",
+      "expectedCanonicalBytesHex" : "76317c73656e6465723d616c6963654064656d6f7c72656365697665723d626f624064656d6f7c616d6f756e743d3530302e30307c6e6f6e63653d35353065383430302d653239622d343164342d613731362d3434363635353434303030317c7369676e656441743d31373236343830383030303030",
+      "signerKey" : "sender",
+      "expectedSignatureBase64" : "TKcm8zSdhBQcycEvnR9/GdjO5xSI+WkZuPGLYXa/lKrf5wB+W/cuXN5pNS0LdkRtOzAUTRE1wsujajVTkEm8DA=="
+    }, {
+      "id" : "v1_half_up_rounding",
+      "senderVpa" : "alice@demo",
+      "receiverVpa" : "merchant@demo",
+      "amount" : "123.456",
+      "nonce" : "550e8400-e29b-41d4-a716-446655440002",
+      "signedAt" : 1726480810000,
+      "expectedCanonicalString" : "v1|sender=alice@demo|receiver=merchant@demo|amount=123.46|nonce=550e8400-e29b-41d4-a716-446655440002|signedAt=1726480810000",
+      "expectedCanonicalBytesHex" : "76317c73656e6465723d616c6963654064656d6f7c72656365697665723d6d65726368616e744064656d6f7c616d6f756e743d3132332e34367c6e6f6e63653d35353065383430302d653239622d343164342d613731362d3434363635353434303030327c7369676e656441743d31373236343830383130303030",
+      "signerKey" : "sender",
+      "expectedSignatureBase64" : "1j+IX/A0uklwH4IX3pqf/stGbU5WvxXeOVg9/qcbTYHls19RpFJLwLsLV+CFkeKIGXGdKno1su+dh1aIg/NVBg=="
+    } ],
+    "v3_transactions" : [ {
+      "id" : "v3_standard",
+      "walletId" : "WLT-DEV-001",
+      "walletEpoch" : 1,
+      "sequenceCounter" : 1,
+      "cumulativeAmount" : "100.50",
+      "senderVpa" : "alice@demo",
+      "receiverVpa" : "bob@demo",
+      "amount" : "100.50",
+      "nonce" : "550e8400-e29b-41d4-a716-446655440003",
+      "signedAt" : 1726480800000,
+      "expectedCanonicalString" : "v3_tx|walletId=WLT-DEV-001|epoch=1|counter=1|cumAmount=100.50|sender=alice@demo|receiver=bob@demo|amount=100.50|nonce=550e8400-e29b-41d4-a716-446655440003|signedAt=1726480800000",
+      "expectedCanonicalBytesHex" : "76335f74787c77616c6c657449643d574c542d4445562d3030317c65706f63683d317c636f756e7465723d317c63756d416d6f756e743d3130302e35307c73656e6465723d616c6963654064656d6f7c72656365697665723d626f624064656d6f7c616d6f756e743d3130302e35307c6e6f6e63653d35353065383430302d653239622d343164342d613731362d3434363635353434303030337c7369676e656441743d31373236343830383030303030",
+      "signerKey" : "device",
+      "expectedSignatureBase64" : "o5FpvhNZwkbjnNe2lzGNRtrX0fryPGGW1KX0GAE2mp0Ji/dXlYrmoNwunB0/JTvXFOVnL4XuRa+Vmemvc0TeBQ=="
+    }, {
+      "id" : "v3_counter_and_accumulation",
+      "walletId" : "WLT-DEV-001",
+      "walletEpoch" : 1,
+      "sequenceCounter" : 2,
+      "cumulativeAmount" : "250.75",
+      "senderVpa" : "alice@demo",
+      "receiverVpa" : "merchant@demo",
+      "amount" : "150.25",
+      "nonce" : "550e8400-e29b-41d4-a716-446655440004",
+      "signedAt" : 1726480820000,
+      "expectedCanonicalString" : "v3_tx|walletId=WLT-DEV-001|epoch=1|counter=2|cumAmount=250.75|sender=alice@demo|receiver=merchant@demo|amount=150.25|nonce=550e8400-e29b-41d4-a716-446655440004|signedAt=1726480820000",
+      "expectedCanonicalBytesHex" : "76335f74787c77616c6c657449643d574c542d4445562d3030317c65706f63683d317c636f756e7465723d327c63756d416d6f756e743d3235302e37357c73656e6465723d616c6963654064656d6f7c72656365697665723d6d65726368616e744064656d6f7c616d6f756e743d3135302e32357c6e6f6e63653d35353065383430302d653239622d343164342d613731362d3434363635353434303030347c7369676e656441743d31373236343830383230303030",
+      "signerKey" : "device",
+      "expectedSignatureBase64" : "JgY+9FxzpG+yrwMycBUxi35CCIIgttG8dCSfPwAaeAZYJKDYW3K+Jo1G/+M8YTMxUsQ2pKEafmSX6tWBXrriAg=="
+    }, {
+      "id" : "v3_null_defaults",
+      "walletId" : "  WLT-DEV-002  ",
+      "walletEpoch" : null,
+      "sequenceCounter" : null,
+      "cumulativeAmount" : null,
+      "senderVpa" : "alice@demo",
+      "receiverVpa" : "bob@demo",
+      "amount" : "75.00",
+      "nonce" : "550e8400-e29b-41d4-a716-446655440005",
+      "signedAt" : 1726480830000,
+      "expectedCanonicalString" : "v3_tx|walletId=WLT-DEV-002|epoch=1|counter=1|cumAmount=75.00|sender=alice@demo|receiver=bob@demo|amount=75.00|nonce=550e8400-e29b-41d4-a716-446655440005|signedAt=1726480830000",
+      "expectedCanonicalBytesHex" : "76335f74787c77616c6c657449643d574c542d4445562d3030327c65706f63683d317c636f756e7465723d317c63756d416d6f756e743d37352e30307c73656e6465723d616c6963654064656d6f7c72656365697665723d626f624064656d6f7c616d6f756e743d37352e30307c6e6f6e63653d35353065383430302d653239622d343164342d613731362d3434363635353434303030357c7369676e656441743d31373236343830383330303030",
+      "signerKey" : "device",
+      "expectedSignatureBase64" : "LHy/NPUdlCkZmCU73fiLYeaXrjhOyeCkbk1MximCvp2SvreP6x9DNxucx8EviyVL0YDmYK8spZVOaC1Vxg3QDg=="
+    } ],
+    "certificates" : [ {
+      "id" : "cert_standard",
+      "walletId" : "WLT-DEV-001",
+      "ownerVpa" : "alice@demo",
+      "ownerPublicKey" : "MCowBQYDK2VwAyEA9EMRgZZmB7qfPn1pHxh6Eq9x4RrV5EFjwwAvv5QUljA=",
+      "allocatedAmount" : "2000.00",
+      "walletEpoch" : 1,
+      "validFrom" : 1726480800000,
+      "validUntil" : 1726567200000,
+      "initialCounter" : 0,
+      "expectedCanonicalString" : "v1_cert|walletId=WLT-DEV-001|ownerVpa=alice@demo|ownerPublicKey=MCowBQYDK2VwAyEA9EMRgZZmB7qfPn1pHxh6Eq9x4RrV5EFjwwAvv5QUljA=|allocatedAmount=2000.00|walletEpoch=1|validFrom=1726480800000|validUntil=1726567200000|initialCounter=0",
+      "expectedCanonicalBytesHex" : "76315f636572747c77616c6c657449643d574c542d4445562d3030317c6f776e65725670613d616c6963654064656d6f7c6f776e65725075626c69634b65793d4d436f77425159444b3256774179454139454d52675a5a6d42377166506e31704878683645713978345272563545466a77774176763551556c6a413d7c616c6c6f6361746564416d6f756e743d323030302e30307c77616c6c657445706f63683d317c76616c696446726f6d3d313732363438303830303030307c76616c6964556e74696c3d313732363536373230303030307c696e697469616c436f756e7465723d30",
+      "signerKey" : "issuer",
+      "expectedSignatureBase64" : "q225HTQIyJj9b71lowgjC09U0oz7dezN20c0aulq5QQ/mIaMINTIo+o8xGfNVrMzOguFywq/i9tLBZwcPzkPAA=="
+    }, {
+      "id" : "cert_null_defaults",
+      "walletId" : null,
+      "ownerVpa" : "  ALICE@DEMO  ",
+      "ownerPublicKey" : null,
+      "allocatedAmount" : null,
+      "walletEpoch" : null,
+      "validFrom" : 1726480800000,
+      "validUntil" : 1726567200000,
+      "initialCounter" : null,
+      "expectedCanonicalString" : "v1_cert|walletId=|ownerVpa=alice@demo|ownerPublicKey=|allocatedAmount=0.00|walletEpoch=1|validFrom=1726480800000|validUntil=1726567200000|initialCounter=0",
+      "expectedCanonicalBytesHex" : "76315f636572747c77616c6c657449643d7c6f776e65725670613d616c6963654064656d6f7c6f776e65725075626c69634b65793d7c616c6c6f6361746564416d6f756e743d302e30307c77616c6c657445706f63683d317c76616c696446726f6d3d313732363438303830303030307c76616c6964556e74696c3d313732363536373230303030307c696e697469616c436f756e7465723d30",
+      "signerKey" : "issuer",
+      "expectedSignatureBase64" : "+uk9Fz9fUPKZ0OggH9RZrQP5jEmMMia/o3W+3m3mcNLJEVP3GllDtsWrS5fy978adjCWw3JZcWdl/+CuDc5CBQ=="
+    } ],
+    "receipts" : [ {
+      "id" : "receipt_standard",
+      "transactionId" : 101,
+      "packetHash" : "6a09e667f3bcc908b482f710e30902c67cf75cfd371d184cf434e3d6f1406859",
+      "counter" : 1,
+      "status" : "SETTLED",
+      "settledAt" : 1726480900000,
+      "expectedCanonicalString" : "v1_receipt|txId=101|hash=6a09e667f3bcc908b482f710e30902c67cf75cfd371d184cf434e3d6f1406859|counter=1|status=SETTLED|settledAt=1726480900000",
+      "expectedCanonicalBytesHex" : "76315f726563656970747c747849643d3130317c686173683d366130396536363766336263633930386234383266373130653330393032633637636637356366643337316431383463663433346533643666313430363835397c636f756e7465723d317c7374617475733d534554544c45447c736574746c656441743d31373236343830393030303030",
+      "signerKey" : "issuer",
+      "expectedSignatureBase64" : "9MzoydAtFyO+N3QibyYECyn601bhVlfWY0J4u4zHqK7pz4G8X/Kq7VMkMV4mH0DZkpvhVRP4LLeqfEizSanxBA=="
+    }, {
+      "id" : "receipt_null_defaults",
+      "transactionId" : 102,
+      "packetHash" : null,
+      "counter" : null,
+      "status" : null,
+      "settledAt" : 1726480950000,
+      "expectedCanonicalString" : "v1_receipt|txId=102|hash=|counter=0|status=|settledAt=1726480950000",
+      "expectedCanonicalBytesHex" : "76315f726563656970747c747849643d3130327c686173683d7c636f756e7465723d307c7374617475733d7c736574746c656441743d31373236343830393530303030",
+      "signerKey" : "issuer",
+      "expectedSignatureBase64" : "F6psmA2bolYslx3vKTYZkO/wWOrbmjAmXHn/pkxxfBPkRe7PbYPMwfgej7ZJf5LDm3dKMI2H+m/B5sh3Qr6+Bw=="
+    } ]
+  },
+  "hybrid_encryption" : {
+    "vectors" : [ {
+      "id" : "hybrid_standard_envelope",
+      "recipientRsaKey" : "server",
+      "plaintextJson" : "{\r\n  \"senderVpa\" : \"alice@demo\",\r\n  \"receiverVpa\" : \"bob@demo\",\r\n  \"amount\" : 100.50,\r\n  \"pinHash\" : \"1234\",\r\n  \"nonce\" : \"550e8400-e29b-41d4-a716-446655440000\",\r\n  \"signedAt\" : 1726480800000,\r\n  \"signature\" : null,\r\n  \"signatureAlgorithm\" : \"Ed25519\",\r\n  \"walletId\" : null,\r\n  \"walletEpoch\" : null,\r\n  \"sequenceCounter\" : null,\r\n  \"cumulativeAmount\" : null,\r\n  \"walletCertificate\" : null\r\n}",
+      "aesKeyHex" : "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "ivHex" : "a0a1a2a3a4a5a6a7a8a9aaab",
+      "rsaEncryptedAesKeyBase64" : "z+BgZzpVx53lDFq2BmyHVsiXmIaLBah8Eo6Sw3q1eO7MGcYLXNU/nOwcoe+1Ic981QgNwOyiZkHg3Mo2h1RAx0D4dNpzhsKRb1CTP9E8QjlR7VGgGpem3PcrB5FtkqGnrucijH9WP7gmjqpE5XRQCWS1dmjZh3YVzAag77c/i5svUh38oGJGsRKRNee/F+YWQChjmYTQZpSK4tWFvztVeC9LxaDGbHgJdekabvjgFtgsmJ80tyqkcWsZmuCzKeBkmHhrtLEQm4uzEaAz3xMivo+B+EwOB+qkxeBn8W0eLS42oVCVBXqjVBr87Gz1YMOQZpFLfJxeFGNM6neglYLYkw==",
+      "aesGcmCiphertextTagBase64" : "wtw3Rt2XKWERascZp/VBpnftkDs5BAnnQhuxmD8h+hk827nozaDVV0gftvzUYD5GO5ZK5O75kbcIgOadrRQrZaZig8bPRiOEtORk1Dj6yu/9sSN7VPtYVunQtlOJjzTSbPwiZ2HDaZuXvWxafmzc5sO8Nhmytf7x/sFqg993V+3OvXbSVPfSkWxBxiMmD46R1EWgRuT0ZVFVOvA+DEZrdw/ckPt7u1ByIoZYeSUIrmRauzaiITXqWwu5exBGwJ17DBDfi8KijqhKl1KTqYZXMAlNSntqm+d41zSzVR3t/QOC5jeUcJr3U9MII53JpOsd/ymwlAKBmi66lYMsrTg6v3u5Wx/hm7NZPOMdeThJlChct/A231V49TRUgxk+wytObgbMBpYUS8a/xUZf+zkR275p8JKPVdXxEzE/UecGSyUBL1Bn1dFwN7S+cp4Ym1pDQ57WswgpW23Ur040oynq/DAzWOzGYuVOBtXhyyhOPBFH3E6fxGjI52PSIlg440HwrG4Skw+Ic9H5EX+Yv4IJUcAKPx2j+ho=",
+      "wireBase64Ciphertext" : "z+BgZzpVx53lDFq2BmyHVsiXmIaLBah8Eo6Sw3q1eO7MGcYLXNU/nOwcoe+1Ic981QgNwOyiZkHg3Mo2h1RAx0D4dNpzhsKRb1CTP9E8QjlR7VGgGpem3PcrB5FtkqGnrucijH9WP7gmjqpE5XRQCWS1dmjZh3YVzAag77c/i5svUh38oGJGsRKRNee/F+YWQChjmYTQZpSK4tWFvztVeC9LxaDGbHgJdekabvjgFtgsmJ80tyqkcWsZmuCzKeBkmHhrtLEQm4uzEaAz3xMivo+B+EwOB+qkxeBn8W0eLS42oVCVBXqjVBr87Gz1YMOQZpFLfJxeFGNM6neglYLYk6ChoqOkpaanqKmqq8LcN0bdlylhEWrHGaf1QaZ37ZA7OQQJ50IbsZg/IfoZPNu56M2g1VdIH7b81GA+RjuWSuTu+ZG3CIDmna0UK2WmYoPGz0YjhLTkZNQ4+srv/bEje1T7WFbp0LZTiY800mz8Imdhw2mbl71sWn5s3ObDvDYZsrX+8f7BaoPfd1ftzr120lT30pFsQcYjJg+OkdRFoEbk9GVRVTrwPgxGa3cP3JD7e7tQciKGWHklCK5kWrs2oiE16lsLuXsQRsCdewwQ34vCoo6oSpdSk6mGVzAJTUp7apvneNc0s1Ud7f0DguY3lHCa91PTCCOdyaTrHf8psJQCgZouupWDLK04Or97uVsf4ZuzWTzjHXk4SZQoXLfwNt9VePU0VIMZPsMrTm4GzAaWFEvGv8VGX/s5Edu+afCSj1XV8RMxP1HnBkslAS9QZ9XRcDe0vnKeGJtaQ0Oe1rMIKVtt1K9ONKMp6vwwM1jsxmLlTgbV4csoTjwRR9xOn8RoyOdj0iJYOONB8KxuEpMPiHPR+RF/mL+CCVHACj8do/oa",
+      "expectedPacketHash" : "7dff2fa56ff9d51920a05d353925ceb3087e8fb1cf2afaa34fafff7d7e1e66ce"
+    } ]
+  },
+  "packet_hashes" : [ {
+    "id" : "hash_hybrid_wire",
+    "ciphertext" : "z+BgZzpVx53lDFq2BmyHVsiXmIaLBah8Eo6Sw3q1eO7MGcYLXNU/nOwcoe+1Ic981QgNwOyiZkHg3Mo2h1RAx0D4dNpzhsKRb1CTP9E8QjlR7VGgGpem3PcrB5FtkqGnrucijH9WP7gmjqpE5XRQCWS1dmjZh3YVzAag77c/i5svUh38oGJGsRKRNee/F+YWQChjmYTQZpSK4tWFvztVeC9LxaDGbHgJdekabvjgFtgsmJ80tyqkcWsZmuCzKeBkmHhrtLEQm4uzEaAz3xMivo+B+EwOB+qkxeBn8W0eLS42oVCVBXqjVBr87Gz1YMOQZpFLfJxeFGNM6neglYLYk6ChoqOkpaanqKmqq8LcN0bdlylhEWrHGaf1QaZ37ZA7OQQJ50IbsZg/IfoZPNu56M2g1VdIH7b81GA+RjuWSuTu+ZG3CIDmna0UK2WmYoPGz0YjhLTkZNQ4+srv/bEje1T7WFbp0LZTiY800mz8Imdhw2mbl71sWn5s3ObDvDYZsrX+8f7BaoPfd1ftzr120lT30pFsQcYjJg+OkdRFoEbk9GVRVTrwPgxGa3cP3JD7e7tQciKGWHklCK5kWrs2oiE16lsLuXsQRsCdewwQ34vCoo6oSpdSk6mGVzAJTUp7apvneNc0s1Ud7f0DguY3lHCa91PTCCOdyaTrHf8psJQCgZouupWDLK04Or97uVsf4ZuzWTzjHXk4SZQoXLfwNt9VePU0VIMZPsMrTm4GzAaWFEvGv8VGX/s5Edu+afCSj1XV8RMxP1HnBkslAS9QZ9XRcDe0vnKeGJtaQ0Oe1rMIKVtt1K9ONKMp6vwwM1jsxmLlTgbV4csoTjwRR9xOn8RoyOdj0iJYOONB8KxuEpMPiHPR+RF/mL+CCVHACj8do/oa",
+    "expectedPacketHash" : "7dff2fa56ff9d51920a05d353925ceb3087e8fb1cf2afaa34fafff7d7e1e66ce"
+  }, {
+    "id" : "hash_sample_base64",
+    "ciphertext" : "SGVsbG8gVVBJIE9mZmxpbmUgTWVzaCAyMDI2",
+    "expectedPacketHash" : "25096db5ed769638b45cebc787d2af669567089a2c1d7cba8e4729d01f4a362f"
+  } ]
+}

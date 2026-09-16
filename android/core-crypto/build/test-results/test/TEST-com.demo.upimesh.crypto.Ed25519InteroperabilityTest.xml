@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.demo.upimesh.crypto.Ed25519InteroperabilityTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-09-16T04:52:46" hostname="M-HAFEEZ" time="0.06">
+  <properties/>
+  <testcase name="testJavaGeneratedV1SignaturesVerifiedByKotlin()" classname="com.demo.upimesh.crypto.Ed25519InteroperabilityTest" time="0.006"/>
+  <testcase name="testKotlinSignsAndProducesIdenticalDeterministicSignature()" classname="com.demo.upimesh.crypto.Ed25519InteroperabilityTest" time="0.047"/>
+  <testcase name="testJavaGeneratedV3SignaturesVerifiedByKotlin()" classname="com.demo.upimesh.crypto.Ed25519InteroperabilityTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
