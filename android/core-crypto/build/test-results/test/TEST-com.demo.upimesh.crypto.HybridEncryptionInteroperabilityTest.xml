@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.demo.upimesh.crypto.HybridEncryptionInteroperabilityTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-09-16T06:02:34" hostname="M-HAFEEZ" time="0.372">
-  <properties/>
-  <testcase name="testKotlinEncryptsEnvelopeCompatibleWithJavaFormat()" classname="com.demo.upimesh.crypto.HybridEncryptionInteroperabilityTest" time="0.24"/>
-  <testcase name="testJavaGeneratedEnvelopeDecryptedByKotlin()" classname="com.demo.upimesh.crypto.HybridEncryptionInteroperabilityTest" time="0.066"/>
-  <testcase name="testTamperedCiphertextThrowsOnDecryption()" classname="com.demo.upimesh.crypto.HybridEncryptionInteroperabilityTest" time="0.062"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

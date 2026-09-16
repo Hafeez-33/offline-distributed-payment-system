@@ -1578,4 +1578,3 @@ It is NOT:
 
 All security and consistency claims must be limited to what is actually implemented and experimentally verified.
 
-
