@@ -1,0 +1,75 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "id": null,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Total Fault Injections",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_fault_injections_total)", "legendFormat": "Injections", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "orange", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "title": "Packets Dropped by Faults",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_fault_drops_total)", "legendFormat": "Drops", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "red", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "title": "Packets Duplicated by Faults",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_fault_duplicates_total)", "legendFormat": "Duplicates", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "blue", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "title": "Invariant Violations (I1–I12)",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_invariant_violations_total)", "legendFormat": "Violations", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "red", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
+      "title": "Fault Injections by Type Rate",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(upi_fault_injections_total[1m])", "legendFormat": "{{fault_type}}", "refId": "A" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
+      "title": "Fault Side-Effects (Drops, Delays, Reorders, Partitions)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(upi_fault_drops_total[1m])", "legendFormat": "Drops/s", "refId": "A" },
+        { "expr": "rate(upi_fault_delays_total[1m])", "legendFormat": "Delays/s", "refId": "B" },
+        { "expr": "rate(upi_fault_reorders_total[1m])", "legendFormat": "Reorders/s", "refId": "C" },
+        { "expr": "rate(upi_fault_partitions_total[1m])", "legendFormat": "Partitions/s", "refId": "D" },
+        { "expr": "rate(upi_fault_recoveries_total[1m])", "legendFormat": "Recoveries/s", "refId": "E" }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["upi", "reliability", "faults", "invariants"],
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "05 - UPI Reliability & Faults",
+  "uid": "upi-faults",
+  "version": 1
+}

@@ -1,0 +1,99 @@
+groups:
+  - name: upi_offline_mesh_alerts
+    rules:
+      # 1. Authoritative PostgreSQL Ledger Unavailable (CRITICAL)
+      # Rationale: PostgreSQL is the single source of truth for all balances, escrow, and settlements.
+      # If Postgres is down, no transactions can be settled.
+      - alert: PostgresUnavailable
+        expr: upi_system_database == 0 or up{job="upi-offline-mesh"} == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Authoritative PostgreSQL ledger is unreachable"
+          description: "Spring Boot Actuator reports database connectivity failure. Ledger is unable to process settlements."
+
+      # 2. Non-Authoritative Redis Degraded (WARNING)
+      # Rationale: Redis provides distributed locks and dashboard caching. When Redis fails,
+      # the backend safely falls back to local in-memory gates and the PostgreSQL UNIQUE constraint.
+      # This is a warning condition rather than a financial failure.
+      - alert: RedisDegraded
+        expr: increase(upi_infra_redis_fallbacks_total[1m]) > 5 or upi_system_redis == 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis coordination service is degraded"
+          description: "Transactions are falling back to local concurrency gates and database-level idempotency barriers."
+
+      # 3. High Settlement Latency (WARNING)
+      # Rationale: Expected p99 settlement time is under 100ms. If p99 exceeds 500ms,
+      # database lock contention or disk I/O bottlenecks are occurring.
+      - alert: HighSettlementLatency
+        expr: histogram_quantile(0.99, sum(rate(upi_settlement_latency_seconds_bucket[2m])) by (le)) > 0.5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p99 settlement latency exceeds 500ms"
+          description: "Database settlement latency is elevated. Check for lock contention on hot accounts."
+
+      # 4. High Transaction Rejection Rate (WARNING)
+      # Rationale: Normal mesh operation has <5% validation rejections. If >15% of transactions are rejected
+      # over a 5-minute window, investigate potential clock skew, expired certificates, or stale packets.
+      - alert: HighTransactionRejectionRate
+        expr: rate(upi_transactions_rejected_total[5m]) / (rate(upi_transactions_attempted_total[5m]) + 0.001) > 0.15
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Transaction rejection rate exceeds 15%"
+          description: "High volume of rejected transactions. Inspect rejection reasons (e.g. stale_packet, invalid_signature)."
+
+      # 5. Conflicting Transactions Detected (WARNING)
+      # Rationale: A conflicting transaction indicates an offline double-spend fork attempt (duplicate sequence counter).
+      # Conflicting transactions freeze disputed wallets and require operator audit.
+      - alert: ConflictingTransactionsDetected
+        expr: increase(upi_transactions_conflicting_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Offline wallet double-spend conflict detected"
+          description: "Conflicting transaction counter submitted. Affected offline wallet has been frozen in LOCKED_DISPUTED state."
+
+      # 6. Critical Invariant Violation (CRITICAL)
+      # Rationale: Invariants I1–I12 must NEVER fail. Any violation signifies potential cryptographic,
+      # deduplication, or escrow conservation corruption.
+      - alert: InvariantViolationDetected
+        expr: increase(upi_invariant_violations_total[1m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Machine-checkable invariant violation detected"
+          description: "System invariant audit failed. Immediate investigation of ledger consistency and cryptography is required."
+
+      # 7. Mesh Convergence Failure (WARNING)
+      # Rationale: After pairwise anti-entropy rounds, reachable devices in the same partition should converge
+      # to identical SHA-256 state digests. Persistent failures indicate sync protocol degradation.
+      - alert: MeshConvergenceFailure
+        expr: rate(upi_mesh_convergence_checks_total{converged="false"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mesh devices failing to converge state digests"
+          description: "Anti-entropy pull rounds are not achieving state digest equality across reachable peers."
+
+      # 8. Excessive Database Retries (WARNING)
+      # Rationale: Bounded retries resolve occasional optimistic-lock collisions. If retries exceed 10/min,
+      # account contention is unusually high.
+      - alert: ExcessiveDbRetries
+        expr: increase(upi_infra_db_retries_total[1m]) > 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated optimistic-lock retry rate"
+          description: "Multiple concurrent transactions are updating the same account or wallet simultaneously."

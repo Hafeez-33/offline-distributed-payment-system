@@ -1,11 +1,13 @@
 package com.demo.upimesh.fault;
 
+import com.demo.upimesh.metrics.UpiMetricsService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
  * In-memory reliability metrics registry for Phase 5 distributed fault injection testing.
- * Provides machine-readable counters for test assertions and prepares for future Phase 8 metric exports.
+ * Provides machine-readable counters for test assertions and integrates with Phase 8 Micrometer metrics.
  */
 @Component
 public class ReliabilityMetrics {
@@ -21,6 +23,19 @@ public class ReliabilityMetrics {
     private final LongAdder reconciliationRecoveryTotal = new LongAdder();
     private final LongAdder invariantViolationsTotal = new LongAdder();
 
+    private UpiMetricsService metricsService;
+
+    public ReliabilityMetrics() {}
+
+    @Autowired
+    public ReliabilityMetrics(@Autowired(required = false) UpiMetricsService metricsService) {
+        this.metricsService = metricsService;
+    }
+
+    public void setMetricsService(UpiMetricsService metricsService) {
+        this.metricsService = metricsService;
+    }
+
     public void recordFault(FaultType type) {
         faultInjectionsTotal.increment();
         if (type != null) {
@@ -33,6 +48,9 @@ public class ReliabilityMetrics {
                 default -> {}
             }
         }
+        if (metricsService != null) {
+            metricsService.recordFaultInjection(type);
+        }
     }
 
     public void recordRetry() {
@@ -41,6 +59,9 @@ public class ReliabilityMetrics {
 
     public void recordRecovery() {
         faultRecoveriesTotal.increment();
+        if (metricsService != null) {
+            metricsService.recordFaultRecovery();
+        }
     }
 
     public void recordReconciliation() {
@@ -49,6 +70,16 @@ public class ReliabilityMetrics {
 
     public void recordViolation() {
         invariantViolationsTotal.increment();
+        if (metricsService != null) {
+            metricsService.recordInvariantViolation("GENERAL");
+        }
+    }
+
+    public void recordViolation(String invariantId) {
+        invariantViolationsTotal.increment();
+        if (metricsService != null) {
+            metricsService.recordInvariantViolation(invariantId);
+        }
     }
 
     public long getFaultInjectionsTotal() {

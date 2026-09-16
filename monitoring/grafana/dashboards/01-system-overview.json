@@ -1,0 +1,82 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Total Transactions Attempted",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_transactions_attempted_total)", "legendFormat": "Attempts", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "title": "Total Transactions Settled",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_transactions_settled_total)", "legendFormat": "Settled", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "green", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "title": "Total Duplicates Suppressed",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_transactions_duplicate_total)", "legendFormat": "Duplicates", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "blue", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "title": "Disputed Wallets (Forks)",
+      "type": "stat",
+      "targets": [{ "expr": "upi_wallets_disputed_current", "legendFormat": "Disputed", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "red", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
+      "title": "Transaction Ingestion Rate (TPS)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(upi_transactions_attempted_total[1m])", "legendFormat": "Attempts/s", "refId": "A" },
+        { "expr": "rate(upi_transactions_settled_total[1m])", "legendFormat": "Settled/s", "refId": "B" },
+        { "expr": "rate(upi_transactions_duplicate_total[1m])", "legendFormat": "Duplicates/s", "refId": "C" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
+      "title": "Settlement Latency (p50, p90, p99)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum(rate(upi_settlement_latency_seconds_bucket[1m])) by (le))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.90, sum(rate(upi_settlement_latency_seconds_bucket[1m])) by (le))", "legendFormat": "p90", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum(rate(upi_settlement_latency_seconds_bucket[1m])) by (le))", "legendFormat": "p99", "refId": "C" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["upi", "overview", "mesh"],
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": { "refresh_intervals": ["5s", "10s", "30s", "1m"] },
+  "timezone": "browser",
+  "title": "01 - UPI System Overview",
+  "uid": "upi-overview",
+  "version": 1
+}

@@ -3,8 +3,8 @@
 ## Long-Term Engineering Plan
 
 > **Status:** Active Development
-> **Current Phase:** Phase 7 — PostgreSQL + Redis Infrastructure (COMPLETED)
-> **Primary Backend:** Java 17 + Spring Boot + PostgreSQL 16 + Redis 7
+> **Current Phase:** Phase 8 — Observability, Metrics & Production Diagnostics (COMPLETED)
+> **Primary Backend:** Java 17 + Spring Boot + PostgreSQL 16 + Redis 7 + Micrometer / Prometheus
 > **Database Migration:** Flyway
 > **Target Frontend:** React + TypeScript (Phase 6 COMPLETED)
 > **Target Mobile:** Android / Kotlin
@@ -1379,7 +1379,82 @@ The objective is to demonstrate how a secure distributed system can maintain tru
 
 ---
 
-# 19. Important Disclaimer
+# 19. Phase 8 — Observability, Metrics & Production Diagnostics (COMPLETED)
+
+### 19.1 Core Observability Principles
+1. **Financial Non-Authoritative Invariant:** All gauges and metrics (including `upi.wallets.escrow.total.allocated`) are strictly observational telemetry. They must **never** be treated as authoritative financial state. Exact financial truth resides solely in PostgreSQL.
+2. **Strict Bounded Cardinality:** Label values are strictly bounded enums and fixed strings (`status`, `reason`, `fault_type`, `device_role`, `result`). High-cardinality values (`packetHash`, `transactionId`, `walletId`, `ownerVpa`, `requestId`, `nonce`) are strictly prohibited in metric tags to prevent TSDB memory leaks.
+3. **Sensitive Data Protection:** Actuator endpoint detail is restricted (`management.endpoint.health.show-details=when_authorized`). No private keys, database passwords, or decrypted payment payloads are ever emitted in logs or metrics.
+4. **Read-Only Telemetry:** Observability code does not alter business logic, state transitions, or transaction outcomes.
+
+### 19.2 Metrics Catalogue
+
+| Metric Name | Type | Tags | Description |
+|---|---|---|---|
+| `upi.transactions.attempted` | Counter | `mode=online\|offline` | Ingestion attempts received at bridge |
+| `upi.transactions.settled` | Counter | `mode=online\|offline` | Successful settlements committed to DB |
+| `upi.transactions.duplicate` | Counter | `stage=idempotency_claim\|db_barrier` | Duplicate packets dropped |
+| `upi.transactions.rejected` | Counter | `reason=signature_invalid\|expired\|...` | Validation rejections (bounded reasons) |
+| `upi.transactions.conflicting` | Counter | `reason=counter_reuse_detected` | Double-spend attempts detected |
+| `upi.transactions.pending.gap` | Counter | - | Out-of-order sequence counter gap events |
+| `upi.transactions.retries` | Counter | `outcome=success\|exhausted` | Optimistic lock retries in settlement |
+| `upi.settlement.latency` | Timer | `mode=online\|offline` | Latency distribution of settlement transactions |
+| `upi.wallets.allocated` | Counter | - | Offline wallet escrow allocations |
+| `upi.wallets.reconciled` | Counter | - | Completed wallet reconciliations |
+| `upi.wallets.disputed` | Counter | - | Wallets transitioned to `LOCKED_DISPUTED` |
+| `upi.wallets.audit.required` | Counter | - | Wallets flagged for manual audit |
+| `upi.wallets.expired` | Counter | - | Expired wallet sync events |
+| `upi.wallets.escrow.total.allocated` | Gauge | - | Observational escrow total (non-authoritative) |
+| `upi.mesh.packets.received` | Counter | `role=node\|bridge` | Mesh packets received across simulated nodes |
+| `upi.mesh.packets.forwarded` | Counter | - | Packets hopped to peers |
+| `upi.mesh.gossip.rounds` | Counter | - | Gossip sync rounds executed |
+| `upi.mesh.sync.operations` | Counter | `result=in_sync\|diff_resolved` | Anti-entropy digest comparison outcomes |
+| `upi.mesh.partitions` | Counter | `action=partition\|heal` | Network topology partition/heal events |
+| `upi.mesh.bridge.flushes` | Counter | - | Bridge upload executions |
+| `upi.mesh.active.nodes` | Gauge | - | Active nodes count in mesh |
+| `upi.mesh.buffered.packets` | Gauge | - | Packets in flight within mesh nodes |
+| `upi.fault.injections` | Counter | `fault_type=NETWORK_PARTITION\|...` | Fault injection attempts |
+| `upi.fault.recoveries` | Counter | `fault_type=NETWORK_PARTITION\|...` | Automated recoveries from faults |
+| `upi.fault.invariant.violations` | Counter | `invariant=I1_NO_DOUBLE_SPEND\|...` | System invariant audit violations |
+| `upi.infra.redis.ops` | Counter | `op=lock_acquire\|lock_complete\|cache_get\|...` | Redis operations executed |
+| `upi.infra.redis.fallbacks` | Counter | `op=lock_acquire\|cache_get\|...` | Fallbacks triggered due to Redis downtime |
+| `upi.infra.cache.hits` | Counter | `cache=dashboard_overview\|...` | Dashboard cache hits |
+| `upi.infra.cache.misses` | Counter | `cache=dashboard_overview\|...` | Dashboard cache misses |
+| `upi.infra.db.retries` | Counter | - | Database transient optimistic lock retries |
+
+### 19.3 Production Diagnostics & Health Model
+* **Correlation IDs (`X-Request-ID`):** Automatically propagated via `CorrelationIdFilter` into SLF4J MDC `[req:<id>]`. Returned in all HTTP response headers for end-to-end tracing.
+* **Custom Health Indicator (`UpiSystemHealthIndicator`):**
+  * `UP` (HTTP 200): PostgreSQL and Redis both operational.
+  * `DEGRADED` (HTTP 200): PostgreSQL operational, Redis unavailable (non-authoritative fallback active).
+  * `DOWN` (HTTP 503): PostgreSQL unreachable (authoritative financial store down).
+
+### 19.4 Operational Alerting Rules (`alert_rules.yml`)
+1. `PostgresUnavailable` (Critical): Backend database down for >1m.
+2. `RedisDegraded` (Warning): Redis cache/lock unavailable; fallback active for >2m.
+3. `HighSettlementLatency` (Warning): P99 settlement latency > 500ms.
+4. `HighTransactionRejectionRate` (Warning): Rejection rate > 15% of total attempts.
+5. `ConflictingTransactionsDetected` (Critical): Counter re-use or double-spend detected.
+6. `InvariantViolationDetected` (Critical): Core financial or consensus invariant violated.
+7. `MeshConvergenceFailure` (Warning): Gossip divergence detected during anti-entropy sync.
+8. `ExcessiveDbRetries` (Warning): Optimistic lock contention rate > 5 retries/sec.
+
+### 19.5 Grafana Production Dashboards
+* `01-system-overview.json`: System health, total throughput, active faults, and invariant status.
+* `02-transactions.json`: Attempted, settled, duplicate, rejected, and conflict rates with P50/P95/P99 latency.
+* `03-wallets-escrow.json`: Wallet allocations, reconciliations, disputed counts, and observational escrow gauge.
+* `04-mesh-convergence.json`: Packet propagation, hop distribution, partition status, and anti-entropy sync.
+* `05-reliability-faults.json`: Active fault injections, automated recovery rate, and zero-violation monitor.
+* `06-infrastructure.json`: PostgreSQL connections/retries, Redis latency/fallbacks, and cache hit ratio.
+
+### 19.6 Verification Results
+* **Backend Test Suite:** 127 automated tests across 16 test classes — 100% passing (0 failures, 0 errors, 0 skipped).
+* **Frontend Test Suite:** 17 Vitest unit and integration tests — 100% passing. Production build succeeds cleanly.
+* **Docker Compose Validation:** Validated multi-container composition with PostgreSQL 16, Redis 7, Prometheus 2.51, and Grafana 10.4.
+
+---
+
+# 20. Important Disclaimer
 
 This is an engineering/research prototype inspired by offline digital payment concepts.
 

@@ -80,8 +80,7 @@ class PostgresPersistenceIntegrationTest {
         accountRepository.save(new Account(testVpa1, "Sender", new BigDecimal("1000.00"), "pubkey1", "Ed25519"));
         accountRepository.save(new Account(testVpa2, "Receiver", new BigDecimal("500.00"), "pubkey2", "Ed25519"));
 
-        String hash = "deadbeef" + UUID.randomUUID().toString().replace("-", "") + "00000000";
-        hash = hash.substring(0, 64);
+        String hash = ("deadbeef" + UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", "")).substring(0, 64);
 
         Transaction tx1 = new Transaction();
         tx1.setPacketHash(hash);

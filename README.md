@@ -82,13 +82,13 @@ The legacy backend-rendered Thymeleaf dashboard remains accessible at **http://l
 
 ### Run the tests
 
-#### Backend Tests (111 tests across 13 classes)
+#### Backend Tests (127 tests across 16 classes)
 
 ```cmd
 mvnw.cmd test
 ```
 
-Runs the complete 111-test automated verification suite:
+Runs the complete 127-test automated verification suite:
 - **`SignatureServiceTest`** (10 tests): Ed25519 canonicalization, signing, and verification.
 - **`CryptographicIdentityTest`** (10 tests): Sender cryptographic authorization & replay prevention.
 - **`IdempotencyConcurrencyTest`** (3 tests): 3-bridges concurrent delivery & tamper detection.
@@ -102,6 +102,9 @@ Runs the complete 111-test automated verification suite:
 - **`RestartDurabilityIntegrationTest`** (1 test): Phase 7 ledger, escrow, and idempotency barrier survival across ApplicationContext restart.
 - **`RedisFailureResilienceTest`** (1 test): Phase 7 non-authoritative Redis outage fallback and duplicate settlement protection.
 - **`RedisCoordinationAndCacheTest`** (3 tests): Phase 7 distributed locks, cache hit/miss semantics, and mutation invalidation.
+- **`ObservabilityMetricsTest`** (6 tests): Phase 8 Micrometer metric counters, timers, gauges, cardinality guards, and invariant recording.
+- **`HealthAndDiagnosticsTest`** (6 tests): Phase 8 Actuator `/actuator/health`, `/actuator/prometheus`, custom UP/DEGRADED/DOWN health indicator, and credential protection.
+- **`CorrelationIdAndLoggingTest`** (4 tests): Phase 8 `X-Request-ID` generation, propagation, response header echo, and SLF4J MDC cleanup.
 
 #### Frontend Tests (17 tests across 6 suites)
 
@@ -680,6 +683,67 @@ docker compose down
 | `SPRING_DATA_REDIS_HOST` | Redis host | `localhost` |
 | `SPRING_DATA_REDIS_PORT` | Redis port | `6379` |
 | `SPRING_DATA_REDIS_PASSWORD` | Redis password (if required) | *empty* |
+
+---
+
+## Observability, Metrics & Production Diagnostics (Phase 8)
+
+### Architectural Invariant: Observational Telemetry vs. Authoritative Truth
+- **Total System Escrow Metric Is Observational Only:** The `upi.wallets.escrow.total.allocated` metric is telemetry intended exclusively for operational dashboarding and alerting. It must **never** be treated as authoritative financial state. Exact financial balances and escrow truth reside solely in PostgreSQL.
+- **Strict Bounded Cardinality:** No high-cardinality values (`packetHash`, `transactionId`, `walletId`, `ownerVpa`, `requestId`, `nonce`) are ever used as metric tags. Labels are strictly restricted to bounded enums (`status`, `reason`, `mode`, `stage`, `fault_type`, `device_role`, `result`).
+- **Data Protection & Secure Actuator:** Actuator endpoint security is enforced (`management.endpoint.health.show-details=when_authorized`). Detailed infrastructure secrets, passwords, and private keys are never exposed in metrics, actuator endpoints, or log streams.
+
+### Actuator Endpoints & Health Model
+
+| Endpoint | Purpose | Access Policy |
+|---|---|---|
+| `GET /actuator/health` | Service health status (`UP`, `DEGRADED`, `DOWN`) | Public (sanitized without authorization) |
+| `GET /actuator/prometheus` | Prometheus exposition format metrics | Public / Scraped by Prometheus |
+| `GET /actuator/metrics` | Micrometer metric catalog discovery | Diagnostic |
+| `GET /actuator/info` | Application build & version information | Public |
+
+- **Health Status States:**
+  - `UP` (HTTP 200): PostgreSQL and Redis are both healthy and responsive.
+  - `DEGRADED` (HTTP 200): PostgreSQL is healthy, Redis is unavailable. System operates in non-authoritative fallback mode without data loss.
+  - `DOWN` (HTTP 503): PostgreSQL is unreachable. Authoritative financial operations are safely halted.
+
+### Production Monitoring Stack (Prometheus & Grafana)
+
+The complete observability stack is provisioned in `docker-compose.yml`:
+
+```bash
+# Start PostgreSQL, Redis, Prometheus (9090), and Grafana (3000)
+docker compose up -d
+
+# Open Grafana
+http://localhost:3000   (credentials: admin / admin)
+
+# Open Prometheus Web UI & Alert Manager
+http://localhost:9090
+```
+
+#### Pre-Provisioned Grafana Dashboards
+1. **01 - System Overview:** High-level throughput, active faults, node count, and invariant violation counters.
+2. **02 - Transactions & Settlement:** Attempted, settled, duplicate, and rejection rates alongside P50, P95, and P99 latency percentiles.
+3. **03 - Wallets & Escrow:** Wallet lifecycle counts, reconciliations, disputed states, and observational escrow totals.
+4. **04 - Mesh & Gossip Convergence:** Packet reception, gossip hop distribution, network partition events, and anti-entropy sync results.
+5. **05 - Reliability & Fault Injection:** Active simulated fault injections, recovery rates, and invariant violation audits.
+6. **06 - Infrastructure & Cache:** PostgreSQL connection pool, Redis operations, fallback rates, and dashboard cache hit/miss ratios.
+
+#### Operational Alert Rules (`monitoring/prometheus/alert_rules.yml`)
+- `PostgresUnavailable` (Critical): Triggers if PostgreSQL health check fails for >1 minute.
+- `RedisDegraded` (Warning): Triggers if Redis is disconnected and non-authoritative fallback is active for >2 minutes.
+- `HighSettlementLatency` (Warning): Triggers if P99 settlement latency exceeds 500ms over a 5-minute window.
+- `HighTransactionRejectionRate` (Warning): Triggers if rejection rate exceeds 15% of attempted traffic.
+- `ConflictingTransactionsDetected` (Critical): Triggers immediately if a sequence counter re-use/double-spend is detected.
+- `InvariantViolationDetected` (Critical): Triggers immediately if any of invariants I1–I12 fail.
+- `MeshConvergenceFailure` (Warning): Triggers if anti-entropy sync divergence is detected.
+- `ExcessiveDbRetries` (Warning): Triggers if optimistic locking retries exceed 5 per second.
+
+### Correlation IDs & Structured Logging
+- **`X-Request-ID` Header:** Injected automatically into all incoming HTTP requests via `CorrelationIdFilter` if not already provided.
+- **MDC Propagation:** Set in SLF4J MDC `[req:<requestId>]` across the request thread lifecycle.
+- **Response Header:** Echoed back in the HTTP response `X-Request-ID` header for end-to-end tracing.
 
 ---
 

@@ -58,6 +58,9 @@ public class SettlementService {
     @Autowired(required = false)
     private InfrastructureMetrics infrastructureMetrics;
 
+    @Autowired(required = false)
+    private com.demo.upimesh.metrics.UpiMetricsService metricsService;
+
     public void setFaultInterceptor(com.demo.upimesh.fault.FaultInterceptor faultInterceptor) {
         this.faultInterceptor = faultInterceptor;
     }
@@ -68,6 +71,10 @@ public class SettlementService {
 
     public void setInfrastructureMetrics(InfrastructureMetrics infrastructureMetrics) {
         this.infrastructureMetrics = infrastructureMetrics;
+    }
+
+    public void setMetricsService(com.demo.upimesh.metrics.UpiMetricsService metricsService) {
+        this.metricsService = metricsService;
     }
 
     public void setBaseBackoffMs(long baseBackoffMs) {
@@ -99,6 +106,9 @@ public class SettlementService {
                 lastException = e;
                 if (infrastructureMetrics != null) {
                     infrastructureMetrics.recordDbRetry();
+                }
+                if (metricsService != null) {
+                    metricsService.recordSettlementRetry();
                 }
                 log.warn("Optimistic lock / transient conflict on attempt {}/{} for packet {}: {}",
                         attempt, MAX_ATTEMPTS, packetHash.substring(0, Math.min(12, packetHash.length())), e.getMessage());
@@ -175,6 +185,10 @@ public class SettlementService {
         Transaction saved = transactions.save(tx);
         signAndSetReceipt(saved, 0L);
         saved = transactions.save(saved);
+
+        if (metricsService != null) {
+            metricsService.recordTransactionSettled(false, 0L);
+        }
 
         log.info("SETTLED ₹{} from {} to {} (packetHash={}, bridge={}, hops={})",
                 amount, sender.getVpa(), receiver.getVpa(),
@@ -370,6 +384,10 @@ public class SettlementService {
         signAndSetReceipt(saved, counter);
         saved = transactions.save(saved);
 
+        if (metricsService != null) {
+            metricsService.recordTransactionSettled(true, 0L);
+        }
+
         log.info("OFFLINE SETTLED: wallet={}, counter={}, amount=₹{}, remainingEscrow=₹{}",
                 wallet.getWalletId(), counter, amount, wallet.getRemainingAmount());
 
@@ -401,6 +419,9 @@ public class SettlementService {
                 pendingTx.setStatus(Transaction.Status.REJECTED);
                 pendingTx.setConflictReason("insufficient_offline_escrow");
                 transactions.save(pendingTx);
+                if (metricsService != null) {
+                    metricsService.recordPendingGapResolved();
+                }
                 break;
             }
 
@@ -422,6 +443,11 @@ public class SettlementService {
             pendingTx.setSettledAt(Instant.now());
             signAndSetReceipt(pendingTx, nextExpected);
             transactions.save(pendingTx);
+
+            if (metricsService != null) {
+                metricsService.recordTransactionSettled(true, 0L);
+                metricsService.recordPendingGapResolved();
+            }
 
             log.info("CASCADED GAP RESOLVED: wallet={}, counter={}, amount=₹{}, remaining=₹{}",
                     wallet.getWalletId(), nextExpected, pendingTx.getAmount(), wallet.getRemainingAmount());

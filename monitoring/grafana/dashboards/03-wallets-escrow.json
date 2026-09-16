@@ -1,0 +1,75 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "id": null,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Total Wallets Allocated",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_wallets_allocated_total)", "legendFormat": "Allocated", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "blue", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "title": "Total Wallets Reconciled",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_wallets_reconciled_total)", "legendFormat": "Reconciled", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "green", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "title": "Cumulative Escrow Allocated (Observational ₹)",
+      "type": "stat",
+      "targets": [{ "expr": "upi_wallets_escrow_allocated_total", "legendFormat": "Escrow (₹)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "yellow", "mode": "fixed" }, "unit": "currencyINR" } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "title": "Current Pending Sequence Gaps",
+      "type": "stat",
+      "targets": [{ "expr": "upi_transactions_pending_gap_current", "legendFormat": "Gaps", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "orange", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
+      "title": "Wallet Lifecycle Events (Allocations vs Reconciliations)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(upi_wallets_allocated_total[1m])", "legendFormat": "Allocated/s", "refId": "A" },
+        { "expr": "rate(upi_wallets_reconciled_total[1m])", "legendFormat": "Reconciled/s", "refId": "B" },
+        { "expr": "rate(upi_wallets_disputed_total[1m])", "legendFormat": "Disputed/s", "refId": "C" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
+      "title": "Sequence Gap & Expired Certificates",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(upi_transactions_pending_gap_total[1m])", "legendFormat": "Pending Gaps Staged/s", "refId": "A" },
+        { "expr": "rate(upi_wallets_expired_total[1m])", "legendFormat": "Expired Certs/s", "refId": "B" },
+        { "expr": "rate(upi_wallets_audit_required_total[1m])", "legendFormat": "Audit Required/s", "refId": "C" }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["upi", "wallets", "escrow"],
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "03 - UPI Wallets & Escrow",
+  "uid": "upi-wallets",
+  "version": 1
+}
