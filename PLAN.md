@@ -1565,7 +1565,104 @@ The `StartupRecoveryManager`:
 
 ---
 
-# 22. Important Disclaimer
+# 22. Phase 9.3 — Android BLE GATT Transport Layer
+
+## 22.1 Core Architectural Principles & Untrusted Transport Boundary
+* **BLE is Untrusted Transport:** BLE connection security or lack thereof does NOT affect financial correctness. Application-layer payload signatures (Ed25519) and hybrid encryption (RSA-2048-OAEP + AES-256-GCM) provide end-to-end security.
+* **No Pairing/Bonding Prerequisite:** BLE pairing or bonding is explicitly NOT required for protocol correctness.
+* **PostgreSQL & Backend Financial Authority:** Receiving a packet over BLE creates a local `ReceivedPacket` in Room for later gossip/bridge propagation; it **never** increments `settledAmountPaisa` and **never** claims transaction finality.
+
+## 22.2 Approved 128-Bit BLE UUIDs
+* **Service UUID:** `e8a30001-7c2b-4e6a-a83d-3b9e8a9f24c0`
+* **Control Characteristic UUID:** `e8a30002-7c2b-4e6a-a83d-3b9e8a9f24c0` (Write / Notify)
+* **Packet Characteristic UUID:** `e8a30003-7c2b-4e6a-a83d-3b9e8a9f24c0` (Write Without Response / Notify)
+* **State Characteristic UUID:** `e8a30004-7c2b-4e6a-a83d-3b9e8a9f24c0` (Read / Notify)
+
+## 22.3 Exact 16-Byte Fixed UPI Frame Header
+```text
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          Magic (0x5550)       |    Version    |  MessageType  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     Flags     | FragmentIndex | TotalFragments|  TransferId   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       TransferId (cont)       |      PacketHashPrefix (24b)   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| PacketHash (c)|     PayloadLength (16b)       |  CRC16-CCITT  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Payload (0..N bytes)                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+* **Byte 0..1:** Magic (`0x55, 0x50` = 'U', 'P')
+* **Byte 2:** Protocol Version (`0x01`)
+* **Byte 3:** Message Type Code (`0x01..0x0A`)
+* **Byte 4:** Flags bitmask (`0x01` = Last Fragment)
+* **Byte 5:** Fragment Index (`0..63`)
+* **Byte 6:** Total Fragments (`1..64`)
+* **Byte 7..8:** Transfer ID (`0..65535`, Big-Endian)
+* **Byte 9..11:** Packet Hash Prefix (3 bytes / 24 bits)
+* **Byte 12..13:** Payload Length (`0..65535`, Big-Endian)
+* **Byte 14..15:** CRC-16-CCITT (`0..65535`, Big-Endian over header[0..13] + payload)
+
+## 22.4 Dynamic MTU Handling & Formula
+* **Minimum Negotiated MTU:** 64 bytes
+* **Preferred MTU:** 517 bytes
+* **Formula:** $\text{Effective Payload Size} = \text{Negotiated MTU} - 3\text{ (ATT Overhead)} - 16\text{ (UPI Header)} = M - 19$
+* **Error:** Negotiated MTU $< 64$ throws `MTU_TOO_SMALL`.
+
+## 22.5 Fragmentation & ReassemblyEngine
+* **Maximum Fragments:** 64 (1..64)
+* **Out-of-Order Acceptance:** Fragments arrive in any order and are buffered in memory and persisted into Room `PacketFragmentDao`.
+* **Idempotent Duplicate:** Same `transferId` + `fragmentIndex` + identical data is safely ignored.
+* **Conflicting Duplicate:** Same `transferId` + `fragmentIndex` + different data rejected with `DUPLICATE_FRAME`.
+* **Integrity Validation:** Upon receiving all fragments, ciphertext is assembled and SHA-256 hash is compared to `packetHash`. On mismatch, throws `UNKNOWN_PACKET_HASH`.
+* **Room Integration:** On valid reassembly, creates and inserts `ReceivedPacket` into Room and purges fragments.
+* **Restart Recovery:** Recovers incomplete transfer sessions from Room `PacketFragmentDao`.
+* **Timeout:** Incomplete buffers exceeding 60s timeout are purged with `REASSEMBLY_TIMEOUT`.
+
+## 22.6 Deterministic Protocol Errors
+1. `BAD_MAGIC` (0x01)
+2. `UNSUPPORTED_VERSION` (0x02)
+3. `INVALID_MSG_TYPE` (0x03)
+4. `OVERSIZED_PAYLOAD` (0x04)
+5. `CRC_FAILURE` (0x05)
+6. `INVALID_FRAG_INDEX` (0x06)
+7. `EXCESSIVE_FRAGMENTS` (0x07)
+8. `REASSEMBLY_TIMEOUT` (0x08)
+9. `DUPLICATE_FRAME` (0x09)
+10. `UNKNOWN_PACKET_HASH` (0x0A)
+11. `RATE_LIMIT_EXCEEDED` (0x0B)
+12. `MTU_TOO_SMALL` (0x0C)
+
+## 22.7 Resource Boundaries & Rate Limiting
+* Maximum connected peers: 4
+* Maximum total reassembly memory: 2 MB
+* Maximum active reassembly buffers: 8
+* Maximum control message size: 1024 bytes
+* Maximum packet transfer size: 64 KB
+* Maximum local mesh storage target: 10 MB
+* Rate Limiting: HELLO (5/s), Control (20/s), Chunks (100/s), Connection attempts (10/min) per peer.
+
+## 22.8 Verification Results
+* **Android Test Suite:** 79 tests passing (100% green).
+  - `:core-crypto`: 15 tests
+  - `:core-database`: 29 tests
+  - `:core-transport`: 35 tests
+    * `BleUuidsAndRolesTest` (4 tests)
+    * `Crc16CcittTest` (6 tests)
+    * `BleFrameCodecTest` (12 tests)
+    * `MtuManagerTest` (5 tests)
+    * `FragmentationEngineTest` (6 tests)
+    * `ReassemblyManagerTest` (11 tests)
+    * `TransportLimitsAndRateLimitTest` (7 tests)
+    * `HelloCapabilityTest` (2 tests)
+    * `FakeBleCentralPeripheralIntegrationTest` (1 test)
+* **Backend Java Tests:** 139 tests passing (100% green).
+
+---
+
+# 23. Important Disclaimer
 
 This is an engineering/research prototype inspired by offline digital payment concepts.
 

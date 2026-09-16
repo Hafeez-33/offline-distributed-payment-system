@@ -813,6 +813,61 @@ Phase 9.2 implements durable local persistence for Android clients under `:core-
 
 ---
 
+## Phase 9.3: Android BLE GATT Transport Layer
+
+Phase 9.3 implements the point-to-point BLE GATT transport layer under `:core-transport` using Kotlin, dependency-inverted central/peripheral abstractions, deterministic binary framing, CRC-16-CCITT validation, dynamic ATT MTU negotiation, and Room-backed reassembly.
+
+### Strict Architectural Principle: Untrusted Transport Boundary
+> [!IMPORTANT]
+> **UNTRUSTED TRANSPORT BOUNDARY**:
+> **BLE is strictly an untrusted transport medium.**
+> 1. **No Pairing Requirement:** BLE pairing or bonding is NOT required for protocol correctness.
+> 2. **Application Cryptography:** Security is provided entirely by Ed25519 digital signatures and RSA-2048-OAEP + AES-256-GCM hybrid encryption from `:core-crypto`.
+> 3. **No Financial Mutation:** Receiving a packet over BLE creates a durable `ReceivedPacket` in Room for subsequent mesh gossip or bridge forwarding. It **NEVER** increments `settledAmountPaisa` and **NEVER** claims final settlement.
+
+### Approved 128-Bit BLE UUIDs
+* **Service:** `e8a30001-7c2b-4e6a-a83d-3b9e8a9f24c0`
+* **Control Point:** `e8a30002-7c2b-4e6a-a83d-3b9e8a9f24c0` (Write / Notify)
+* **Packet Transfer:** `e8a30003-7c2b-4e6a-a83d-3b9e8a9f24c0` (Write Without Response / Notify)
+* **State Summary:** `e8a30004-7c2b-4e6a-a83d-3b9e8a9f24c0` (Read / Notify)
+
+### 16-Byte Fixed UPI Frame Header
+```text
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          Magic (0x5550)       |    Version    |  MessageType  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     Flags     | FragmentIndex | TotalFragments|  TransferId   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       TransferId (cont)       |      PacketHashPrefix (24b)   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| PacketHash (c)|     PayloadLength (16b)       |  CRC16-CCITT  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Payload (0..N bytes)                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+### Dynamic ATT MTU Handling
+* **Minimum Negotiated MTU:** 64 bytes
+* **Preferred MTU:** 517 bytes
+* **Formula:** $\text{Effective Payload Size} = M - 3\text{ (ATT Overhead)} - 16\text{ (UPI Header)} = M - 19$
+* **Error:** Negotiated MTU $< 64$ throws `MTU_TOO_SMALL`.
+
+### Reassembly & Room Integration
+* **Durable Buffering:** Chunks persist into Room `PacketFragmentDao` across app crashes.
+* **Idempotent Duplicates:** Duplicate chunks are safely ignored.
+* **Integrity Validation:** Upon complete reassembly, SHA-256 `packetHash` is verified. On match, transitions to `ReceivedPacket` and purges fragments; on mismatch, throws `UNKNOWN_PACKET_HASH`.
+* **Resource Limits:** Max 4 peers, max 8 active reassembly sessions, 2 MB memory budget, 1024 B control limit, 64 KB packet limit.
+* **Rate Limiting:** Sliding window limits on HELLO, control frames, packet chunks, and connection attempts.
+
+### Verification Results
+* **Android Test Suite:** 79 tests passing (15 `:core-crypto` + 29 `:core-database` + 35 `:core-transport`).
+* **Backend Java Tests:** 139 tests passing (100% green).
+
+---
+
+
 ## What's NOT real (and what would change for production)
 
 This is a teaching demo. To make it production-grade you'd swap these things:
