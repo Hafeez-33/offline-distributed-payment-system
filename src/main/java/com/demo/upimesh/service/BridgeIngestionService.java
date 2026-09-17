@@ -346,27 +346,47 @@ public class BridgeIngestionService {
         return IngestResult.transientFailure(hash, reason);
     }
 
-    public record IngestResult(String outcome, String packetHash, String reason, Long transactionId, String receiptSignature) {
+    public record IngestResult(
+            String outcome,
+            String packetHash,
+            String reason,
+            Long transactionId,
+            String receiptSignature,
+            Long counter,
+            Long settledAt
+    ) {
+        public IngestResult(String outcome, String packetHash, String reason, Long transactionId, String receiptSignature) {
+            this(outcome, packetHash, reason, transactionId, receiptSignature, null, null);
+        }
+
         public static IngestResult settled(String hash, Transaction tx) {
-            return new IngestResult("SETTLED", hash, null, tx.getId(), tx.getReceiptSignature());
+            return new IngestResult(
+                    "SETTLED",
+                    hash,
+                    null,
+                    tx.getId(),
+                    tx.getReceiptSignature(),
+                    tx.getSequenceCounter(),
+                    tx.getSettledAt() != null ? tx.getSettledAt().toEpochMilli() : null
+            );
         }
         public static IngestResult duplicate(String hash) {
-            return new IngestResult("DUPLICATE_DROPPED", hash, null, null, null);
+            return new IngestResult("DUPLICATE_DROPPED", hash, null, null, null, null, null);
         }
         public static IngestResult invalid(String hash, String reason) {
-            return new IngestResult("INVALID", hash, reason, null, null);
+            return new IngestResult("INVALID", hash, reason, null, null, null, null);
         }
         public static IngestResult rejected(String hash, Transaction tx, String reason) {
-            return new IngestResult("REJECTED", hash, reason, tx != null ? tx.getId() : null, null);
+            return new IngestResult("REJECTED", hash, reason, tx != null ? tx.getId() : null, null, tx != null ? tx.getSequenceCounter() : null, tx != null && tx.getSettledAt() != null ? tx.getSettledAt().toEpochMilli() : null);
         }
         public static IngestResult conflicting(String hash, Transaction tx, String reason) {
-            return new IngestResult("CONFLICTING", hash, reason, tx != null ? tx.getId() : null, null);
+            return new IngestResult("CONFLICTING", hash, reason, tx != null ? tx.getId() : null, null, tx != null ? tx.getSequenceCounter() : null, tx != null && tx.getSettledAt() != null ? tx.getSettledAt().toEpochMilli() : null);
         }
         public static IngestResult pendingGap(String hash, Transaction tx) {
-            return new IngestResult("PENDING_SEQUENCE_GAP", hash, "missing_prior_sequence_counter", tx != null ? tx.getId() : null, null);
+            return new IngestResult("PENDING_SEQUENCE_GAP", hash, "missing_prior_sequence_counter", tx != null ? tx.getId() : null, null, tx != null ? tx.getSequenceCounter() : null, tx != null && tx.getSettledAt() != null ? tx.getSettledAt().toEpochMilli() : null);
         }
         public static IngestResult transientFailure(String hash, String reason) {
-            return new IngestResult("TRANSIENT_FAILURE", hash, reason, null, null);
+            return new IngestResult("TRANSIENT_FAILURE", hash, reason, null, null, null, null);
         }
     }
 }

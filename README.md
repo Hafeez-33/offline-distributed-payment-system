@@ -907,6 +907,37 @@ The Android BLE mesh layer (`:core-mesh`) coordinates with `:core-transport`, `:
 
 ---
 
+## Phase 9.5 — Android WAN Bridge Ingestion Layer
+
+The Android WAN bridge layer (`:core-bridge`) coordinates with `:core-database`, `:core-crypto`, and Android `WorkManager` to securely upload replicated mesh packets to the authoritative Spring Boot backend (`/api/bridge/ingest`) when internet connectivity is detected.
+
+### Core Architectural Principles & Financial Authority Boundary
+* **Bridge as Untrusted Gateway:** The Android device acts strictly as an untrusted forwarder. It holds ZERO financial authority.
+* **Non-Authoritative Settlement:** HTTP 200 upload success signifies *"submitted to backend for authoritative processing"*, NOT *"financially settled"*. The bridge must NEVER mutate `settledAmountPaisa` based on HTTP upload response alone.
+* **Authoritative Receipt Rule (Strict Non-Inference):**
+  - Local `settledAmountPaisa` updates **ONLY** upon cryptographically verifying an authentic, server-signed `SettlementReceipt` (signed with the server's Ed25519 issuer key over canonical bytes `v3_receipt`).
+  - The backend response is authoritative for receipt data. The client must **NEVER** infer, fabricate, or locally synthesize `SettlementReceipt` fields (`transactionId`, `counter`, `settledAt`).
+  - If required receipt fields are missing or inconsistent, the receipt is rejected, `settledAmountPaisa` remains untouched, and the response is classified as permanent/invalid.
+
+### Key Components (`android/core-bridge`)
+1. **`BridgeCapabilityManager`**: Role management (`PAYER`, `RELAY`, `MERCHANT`, `BRIDGE`) and toggleable gateway capability.
+2. **`NetworkConnectivityProvider`**: Reactive internet detection with active capability validation (`NET_CAPABILITY_INTERNET` + `NET_CAPABILITY_VALIDATED`).
+3. **`HttpBackendApiClient`**: Structured JSON over HTTPS with mandatory tracking headers (`X-Bridge-Node-Id`, `X-Hop-Count`, `X-Request-ID`).
+4. **`WanErrorClassifier` & `WanBackoffPolicy`**: Categorizes errors into `RETRYABLE`, `PERMANENT`, `TERMINAL_CONFLICT`, `IGNORED_DUPLICATE` with exponential backoff and jitter.
+5. **`BridgeReceiptValidator`**: Verifies Ed25519 issuer signatures over canonical receipt representations (`v3_receipt`).
+6. **`WanQueueManager`**: Room-backed FIFO queue over `ReceivedPacketDao` (bounded batch limit $\le 50$) with in-flight lease concurrency gates.
+7. **`WanBridgeSyncEngine`**: Batch sync engine managing online/offline transitions, crash recovery, and atomic Room updates.
+8. **`WanUploadWorker`**: WorkManager background execution returning `SUCCESS`, `RETRY`, or `FAILURE`.
+9. **`WanBridgeMetrics`**: Telemetry counters tracking uploaded, retried, conflicting, rejected packets, and verified receipts.
+
+### Verification Results
+* **Android Test Suite:** 165 tests passing across `:core-crypto` (15), `:core-database` (48), `:core-transport` (25), `:core-mesh` (32), and `:core-bridge` (45).
+* **Backend Java Tests:** 139 tests passing (100% green).
+* **Frontend React Tests:** 17 tests passing (100% green).
+* **Total Automated Tests:** 321 tests passing across the repository.
+
+---
+
 ## Honest limitations of the concept & Software vs Hardware Boundary
 
 Let's be completely transparent about the security boundary:

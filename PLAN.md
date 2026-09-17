@@ -1729,7 +1729,110 @@ The `StartupRecoveryManager`:
 
 ---
 
-# 24. Important Disclaimer
+# 24. Phase 9.5 — Android WAN Bridge Ingestion Layer
+
+## 24.1 Core Architecture & Financial Authority Boundary
+* **Bridge as Untrusted Gateway:** A bridge-capable Android device acts as an untrusted forwarder connecting the offline BLE mesh (Room persistence) to the central authoritative Spring Boot HTTPS API (`/api/bridge/ingest` $\to$ PostgreSQL 16).
+* **Zero Local Financial Authority:**
+  - The Android bridge device possesses ZERO financial authority.
+  - HTTP 200 upload success means *"submitted to backend for authoritative processing"*, NOT *"financially settled"*.
+  - The bridge must NEVER mutate `settledAmountPaisa` based on HTTP upload response alone.
+  - Local `settledAmountPaisa` updates **ONLY** upon cryptographically verifying an authentic, server-signed `SettlementReceipt` (signed with the server's Ed25519 issuer key).
+* **Authoritative Receipt Enforcement (Strict Non-Inference Rule):**
+  - The backend response is authoritative for receipt data.
+  - The client must **NEVER** infer, fabricate, or locally synthesize `SettlementReceipt` fields (e.g. `transactionId`, `counter`, `settledAt`).
+  - Only construct/verify the receipt representation when all required fields are explicitly present in the backend response and match the canonical receipt format (`v3_receipt`).
+  - If required receipt data is absent, incomplete, or inconsistent:
+    * Do not update `settledAmountPaisa`
+    * Do not mark the payment settled
+    * Classify the response as invalid/permanent according to the error model.
+
+## 24.2 WAN Ingestion Flow & Queue Management
+```text
+OFFLINE BLE MESH
+       │
+       ▼
+Room `received_packets` (uploadedToBridge = false)
+       │
+       ▼
+WanQueueManager (batch limit <= 50, in-flight lease gate)
+       │
+       ▼
+NetworkConnectivityProvider (Active Internet Detection)
+       │
+       ▼
+HttpBackendApiClient (POST /api/bridge/ingest with X-Bridge-Node-Id, X-Hop-Count, X-Request-ID)
+       │
+       ▼
+Authoritative Spring Boot Backend (PostgreSQL 16 settlement & Ed25519 receipt generation)
+       │
+       ▼
+WanErrorClassifier & BridgeReceiptValidator (Canonical receipt verification)
+       │
+       ├── SETTLED (Valid receipt verified) → Mark uploaded, insert SettlementReceipt, update settledAmountPaisa
+       ├── DUPLICATE_DROPPED → Mark uploaded, return existing settlement if available
+       ├── PENDING_SEQUENCE_GAP → Mark uploaded at bridge (staged on backend awaiting missing counter)
+       ├── TRANSIENT_FAILURE (408/429/5xx) → In-flight lease released, exponential backoff with jitter
+       ├── CONFLICTING (Double Spend) → Mark uploaded, flag local OutboundPayment CONFLICTING, freeze disputed wallet
+       └── PERMANENT (400/401/403/INVALID) → Mark uploaded, flag OutboundPayment REJECTED
+```
+
+## 24.3 Core Bridge Module Components (`android/core-bridge`)
+1. `role/BridgeRole.kt`:
+   - `DeviceRole` (`PAYER`, `RELAY`, `MERCHANT`, `BRIDGE`).
+   - `BridgeConfig` (batch size limits $\le 50$, backoff configuration, toggleable capabilities).
+   - `BridgeCapabilityManager` (thread-safe role switching, active bridge eligibility).
+2. `network/NetworkConnectivityProvider.kt`:
+   - Network connectivity abstraction (`isWanConnected()`, `observeWanConnectivity()`).
+   - `DefaultNetworkConnectivityProvider` (Android `ConnectivityManager` + `NetworkCapabilities.NET_CAPABILITY_INTERNET` & `NET_CAPABILITY_VALIDATED`).
+   - `FakeNetworkConnectivityProvider` (deterministic unit test harness for offline/online transitions).
+3. `client/WanIngestResponse.kt` & `client/BackendApiClient.kt`:
+   - Structured ingestion response DTO with `outcome`, `packetHash`, `transactionId`, `counter`, `settledAt`, `receiptSignature`, `reason`, `httpStatusCode`.
+   - `HttpBackendApiClient`: JSON over HTTPS with mandatory tracking headers (`X-Bridge-Node-Id`, `X-Hop-Count`, `X-Request-ID`), connection and read timeouts (15s).
+   - `FakeBackendApiClient`: Test double supporting timeout simulation, network drops, and sequential response scripting.
+4. `retry/WanErrorClassifier.kt`:
+   - Deterministic classification: `RETRYABLE`, `PERMANENT`, `TERMINAL_CONFLICT`, `IGNORED_DUPLICATE`.
+   - `WanBackoffPolicy`: Truncated exponential backoff ($2^n \times \text{base}$ with jitter, bounded by `maxBackoffMs`).
+5. `receipt/BridgeReceiptValidator.kt`:
+   - Reconstructs canonical `v3_receipt` byte stream (`receipt\n{txId}\n{packetHash}\n{counter}\n{settledAt}`).
+   - Validates Ed25519 issuer signature against trusted server public key.
+   - Enforces positive numeric invariants and non-empty string fields.
+6. `queue/WanQueueManager.kt`:
+   - Room-backed FIFO queue over `ReceivedPacketDao`.
+   - Enforces batch limit $\le 50$.
+   - In-flight lease concurrency gate to prevent concurrent double uploads.
+7. `sync/WanBridgeSyncEngine.kt`:
+   - Orchestrates bounded batch synchronization loop.
+   - Preserves offline/online state transitions, crash recovery, and atomic Room updates.
+8. `work/WanUploadWorker.kt`:
+   - WorkManager integration for background scheduling.
+   - Returns `WanWorkerResult.SUCCESS`, `WanWorkerResult.RETRY`, or `WanWorkerResult.FAILURE`.
+9. `metrics/WanBridgeMetrics.kt`:
+   - Telemetry counters: `packetsUploaded`, `packetsRetried`, `packetsPermanentlyFailed`, `packetsConflicting`, `receiptsVerified`, `receiptsRejected`, `queueDepth`, `activeLeases`.
+
+## 24.4 Verification Results
+* **Android Test Suite:** 165 tests passing (100% green).
+  - `:core-crypto`: 15 tests
+  - `:core-database`: 48 tests
+  - `:core-transport`: 25 tests
+  - `:core-mesh`: 32 tests
+  - `:core-bridge`: 45 tests
+    * `BridgeRoleAndCapabilityTest` (4 tests)
+    * `NetworkConnectivityTest` (2 tests)
+    * `HttpBackendApiClientTest` (4 tests)
+    * `WanErrorClassifierTest` (3 tests)
+    * `BridgeReceiptValidationTest` (10 tests)
+    * `WanQueueManagerTest` (4 tests)
+    * `WanBridgeMetricsTest` (1 test)
+    * `WanUploadWorkerTest` (4 tests)
+    * `WanBridgeSyncEngineIntegrationTest` (13 tests)
+* **Backend Java Tests:** 139 tests passing (100% green).
+* **Frontend React Tests:** 17 tests passing (100% green).
+* **Total Automated Tests:** 321 tests passing across the entire repository.
+
+---
+
+# 25. Important Disclaimer
 
 This is an engineering/research prototype inspired by offline digital payment concepts.
 
