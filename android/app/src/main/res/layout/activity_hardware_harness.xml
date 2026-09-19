@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Title -->
+        <TextView
+            android:id="@+id/tvTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/title_hardware_harness"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_primary"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Device Identity & Role Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@color/surface"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:id="@+id/tvDeviceIdentity"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Identity: alice@demo (dev-a-01)"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:id="@+id/tvDeviceRole"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Current Role: PAYER"
+                android:textColor="@color/text_secondary"
+                android:layout_marginTop="4dp" />
+
+            <Button
+                android:id="@+id/btnToggleRole"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/action_toggle_role"
+                android:layout_marginTop="8dp" />
+        </LinearLayout>
+
+        <!-- BLE & Hardware Status Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@color/surface"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:id="@+id/tvBleStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="BLE Status: Ready (Permissions: Granted)"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:id="@+id/tvAdvState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Advertising: Idle"
+                android:textColor="@color/text_secondary"
+                android:layout_marginTop="4dp" />
+
+            <TextView
+                android:id="@+id/tvScanState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Scanning: Idle (Peers found: 0)"
+                android:textColor="@color/text_secondary"
+                android:layout_marginTop="4dp" />
+
+            <TextView
+                android:id="@+id/tvPeerState"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Connected Peer: None | MTU: 517"
+                android:textColor="@color/text_secondary"
+                android:layout_marginTop="4dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="8dp">
+
+                <Button
+                    android:id="@+id/btnToggleAdv"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/action_start_adv"
+                    android:layout_marginEnd="4dp" />
+
+                <Button
+                    android:id="@+id/btnToggleScan"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/action_start_scan"
+                    android:layout_marginStart="4dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Network & Bridge Queue Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@color/surface"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:id="@+id/tvNetworkStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="WAN Network: Disconnected (Airplane Mode)"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:id="@+id/tvQueueDepth"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Bridge Queue: 0 pending packets"
+                android:textColor="@color/text_secondary"
+                android:layout_marginTop="4dp" />
+
+            <TextView
+                android:id="@+id/tvWalletStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Offline Wallet: ₹1000.00 alloc | ₹0.00 spent | C=0"
+                android:textColor="@color/text_secondary"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Diagnostic Actions -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <Button
+                android:id="@+id/btnCreatePayment"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/action_prepare_payment"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnTriggerSync"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/action_trigger_sync"
+                android:layout_marginBottom="8dp" />
+
+            <Button
+                android:id="@+id/btnTriggerIngest"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/action_trigger_ingest" />
+        </LinearLayout>
+
+        <!-- Diagnostic Log Output -->
+        <TextView
+            android:id="@+id/tvLogs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="[Diagnostic Log]\nHarness initialized."
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:textColor="@color/text_secondary"
+            android:background="@color/surface"
+            android:padding="8dp"
+            android:layout_marginTop="12dp" />
+
+    </LinearLayout>
+</ScrollView>
