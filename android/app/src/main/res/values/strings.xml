@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UPI Mesh Test Harness</string>
+    <string name="title_hardware_harness">UPI Mesh — Physical Hardware Harness</string>
+    <string name="device_identity_label">Device Identity</string>
+    <string name="device_role_label">Device Role</string>
+    <string name="ble_status_label">Bluetooth / BLE Status</string>
+    <string name="network_status_label">WAN Network Status</string>
+    <string name="queue_status_label">Bridge Queue Depth</string>
+    <string name="connected_peer_label">Connected Peer</string>
+    <string name="negotiated_mtu_label">Negotiated ATT MTU</string>
+    <string name="action_toggle_role">Switch Role</string>
+    <string name="action_start_adv">Start BLE Advertising</string>
+    <string name="action_stop_adv">Stop BLE Advertising</string>
+    <string name="action_start_scan">Start BLE Scanning</string>
+    <string name="action_stop_scan">Stop BLE Scanning</string>
+    <string name="action_prepare_payment">Create Offline Payment (₹250)</string>
+    <string name="action_trigger_sync">Trigger Anti-Entropy Sync</string>
+    <string name="action_trigger_ingest">Trigger WAN Ingest Batch</string>
+</resources>

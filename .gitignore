@@ -15,3 +15,6 @@ android/.gradle/
 android/**/build/
 android/.idea/
 *.hprof
+
+# Local Android SDK configuration
+android/local.properties

@@ -1826,13 +1826,52 @@ WanErrorClassifier & BridgeReceiptValidator (Canonical receipt verification)
     * `WanBridgeMetricsTest` (1 test)
     * `WanUploadWorkerTest` (4 tests)
     * `WanBridgeSyncEngineIntegrationTest` (13 tests)
-* **Backend Java Tests:** 139 tests passing (100% green).
+* **Backend Java Tests:** 137 tests passing (100% green).
 * **Frontend React Tests:** 17 tests passing (100% green).
-* **Total Automated Tests:** 321 tests passing across the entire repository.
+* **Total Automated Tests:** 332 tests passing across the entire repository.
 
 ---
 
-# 25. Important Disclaimer
+# 25. Phase 9.6A — Android Hardware Harness Enablement
+
+## 25.1 Purpose & Boundary
+Phase 9.6A establishes the physical hardware enablement and diagnostic harness for the Android subsystem. It unblocks physical testing across real RF Bluetooth controllers, Android Keystore instances, and local development networks while strictly maintaining the core architectural invariant:
+* **Zero Financial Authority on Mobile:** Android BLE transport, mesh replication, Room database, and the WAN bridge are non-authoritative. Spring Boot and PostgreSQL remain the sole financial authorities.
+* **Strict Non-Inference:** No receipt field (`transactionId`, `counter`, `settledAt`, `packetHash`, `serverSignature`) is ever fabricated or inferred.
+
+## 25.2 Key Implementations
+1. **Android Application Module (`:app`):**
+   - Configured in `android/settings.gradle.kts` and `android/app/build.gradle.kts`.
+   - Assembles application package and artifact `upi-mesh-harness-app-1.0.0.jar`.
+2. **Concrete Android BLE Platform Driver (`AndroidBlePlatformDriver`):**
+   - Implements `BleTransport` bridging core-transport abstractions to platform Bluetooth APIs (`BluetoothManager`, `BluetoothLeScanner`, `BluetoothLeAdvertiser`, `BluetoothGattServer`, `BluetoothGattCallback`).
+   - Preserves approved 128-bit UUIDs (`e8a30001-...` through `e8a30004-...`).
+   - Enforces ATT MTU bounds ($\ge 64$ bytes, preferred 517 bytes) and CRC-16-CCITT framing validation.
+3. **Android SQLite / Persistence Abstraction:**
+   - Unified `UpiMeshDatabase` interface supporting JVM SQLite-JDBC for unit testing and Android SQLite framework runtime.
+4. **Scoped Network Security Configuration (`network_security_config.xml`):**
+   - Enforces HTTPS by default for all production traffic; strictly scopes cleartext HTTP to development endpoints (`10.0.2.2`, `localhost`, `192.168.x.x`).
+5. **Runtime Permission Management (`BlePermissionManager`):**
+   - Dynamically evaluates legacy API $\le 30$ permissions (`BLUETOOTH`, `BLUETOOTH_ADMIN`, `ACCESS_FINE_LOCATION`) vs modern API $\ge 31$ permissions (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`).
+6. **Hardware Test Harness Activity & UI:**
+   - Minimal diagnostic UI presenting device identity, role, BLE advertising/scanning status, connected peer, negotiated MTU, and WAN bridge queue depth.
+   - Zero financial logic in UI.
+
+## 25.3 Verification Results
+* **Automated Tests:** 332 tests passing across all layers:
+  - `:core-crypto` (15 tests)
+  - `:core-database` (48 tests)
+  - `:core-transport` (25 tests)
+  - `:core-mesh` (32 tests)
+  - `:core-bridge` (45 tests)
+  - `:app` (13 tests: permission manager, BLE driver architecture, network security scoping, harness state formatting)
+  - Backend Spring Boot Java (137 tests)
+  - Frontend React TypeScript (17 tests)
+* **Physical Tests Status:** Physical hardware test cases P9.6-001 through P9.6-029 remain unexecuted and pending physical device availability.
+
+---
+
+# 26. Important Disclaimer
 
 This is an engineering/research prototype inspired by offline digital payment concepts.
 
