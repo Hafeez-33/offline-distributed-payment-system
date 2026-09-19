@@ -32,6 +32,12 @@ public class OfflineWalletService {
     private final ServerKeyHolder serverKeyHolder;
     private final SignatureService signatureService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DashboardCacheService cacheService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.demo.upimesh.metrics.UpiMetricsService metricsService;
+
     public OfflineWalletService(AccountRepository accountRepository,
                                   OfflineWalletRepository walletRepository,
                                   ServerKeyHolder serverKeyHolder,
@@ -40,6 +46,14 @@ public class OfflineWalletService {
         this.walletRepository = walletRepository;
         this.serverKeyHolder = serverKeyHolder;
         this.signatureService = signatureService;
+    }
+
+    public void setCacheService(DashboardCacheService cacheService) {
+        this.cacheService = cacheService;
+    }
+
+    public void setMetricsService(com.demo.upimesh.metrics.UpiMetricsService metricsService) {
+        this.metricsService = metricsService;
     }
 
     /**
@@ -136,6 +150,14 @@ public class OfflineWalletService {
             log.info("Allocated offline wallet: id={}, owner={}, amount={}, epoch={}, validUntil={}",
                     walletId, account.getVpa(), amount, nextEpoch, validUntil);
 
+            if (metricsService != null) {
+                metricsService.recordWalletAllocated(amount);
+            }
+
+            if (cacheService != null) {
+                cacheService.invalidateOverview();
+            }
+
             return new AllocationResult(wallet, signedCert);
         } catch (Exception e) {
             throw new RuntimeException("Failed to sign offline wallet certificate", e);
@@ -173,6 +195,14 @@ public class OfflineWalletService {
 
         log.info("Reconciled offline wallet: id={}, owner={}, unusedEscrowReturned={}",
                 walletId, wallet.getOwnerVpa(), unusedEscrow);
+
+        if (metricsService != null) {
+            metricsService.recordWalletReconciled();
+        }
+
+        if (cacheService != null) {
+            cacheService.invalidateOverview();
+        }
 
         return closedWallet;
     }

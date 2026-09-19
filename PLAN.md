@@ -3,9 +3,10 @@
 ## Long-Term Engineering Plan
 
 > **Status:** Active Development
-> **Current Phase:** Phase 0 — Repository Understanding / Baseline
-> **Primary Backend:** Java 17 + Spring Boot
-> **Target Frontend:** React + TypeScript
+> **Current Phase:** Phase 8 — Observability, Metrics & Production Diagnostics (COMPLETED)
+> **Primary Backend:** Java 17 + Spring Boot + PostgreSQL 16 + Redis 7 + Micrometer / Prometheus
+> **Database Migration:** Flyway
+> **Target Frontend:** React + TypeScript (Phase 6 COMPLETED)
 > **Target Mobile:** Android / Kotlin
 > **Architecture Goal:** Secure, offline-first, distributed payment protocol prototype
 
@@ -785,174 +786,147 @@ Total Project Test Suite: 71 tests run, 0 failures, 0 errors.
 
 ---
 
-# PHASE 5 — Fault Injection & Distributed Testing
+# PHASE 5 — Fault Injection & Distributed Reliability Testing
 
 ## Objective
 
-Prove the system behaves correctly under failure.
+Validate whether Phases 1–4 continue to preserve their security, idempotency, sequence, and financial conservation invariants under adverse distributed-system conditions using a deterministic, rule-based fault-injection framework.
 
-### Faults
+### 1. Financial Safety Boundary
+Fault injection operates **strictly at transport, control, and exception boundaries**. The fault-injection engine **never directly mutates** account balances, transaction amounts, escrow balances, wallet counters, or database records. All ledger mutations proceed solely through standard domain services (`SettlementService`, `OfflineWalletService`).
 
-Simulate:
+### 2. Supported Fault Types (`FaultType`)
+The layer supports 13 discrete deterministic fault types:
+- **`DROP`**: Discards packets or sync messages silently during transit.
+- **`DUPLICATE`**: Injects duplicate delivery of the identical packet $N$ times.
+- **`DELAY`**: Withholds packets from initial gossip push for delayed delivery.
+- **`REORDER`**: Inverts transmission order (e.g. delivers counter 2 before counter 1) to verify existing Phase 3 `PENDING_SEQUENCE_GAP` handling without altering settlement logic.
+- **`PARTITION`**: Severs communication links between submeshes or nodes.
+- **`PEER_UNAVAILABLE`**: Simulates peer unavailability during anti-entropy to verify `syncWithFallback`.
+- **`BRIDGE_UNAVAILABLE`**: Simulates mesh-to-bridge transport/upload failure while keeping packets in mesh buffers completely intact.
+- **`MALFORMED_SYNC_MESSAGE`**: Injects invalid schema/control sync messages.
+- **`CORRUPTED_PACKET_PAYLOAD`**: Corrupts ciphertext bytes to verify decryption/integrity rejection.
+- **`TRANSIENT_DATABASE_FAILURE`**: Injects transient exceptions (`OptimisticLockException`) to test retry backoff.
+- **`STALE_RESPONSE`**: Drops post-commit HTTP responses to verify fast-path recovery without double debiting.
+- **`DUPLICATE_REQUEST`**: Simultaneous concurrent ingress of identical packet hashes.
+- **`CRASH_AND_RESTART`**: Volatile node buffer wipe (`clear()`) followed by full anti-entropy reconstruction.
 
-```text
-Packet loss
-Packet duplication
-Packet delay
-Network partition
-Node crash
-Bridge failure
-Concurrent transactions
-Replay attack
-Tampered packet
-Out-of-order delivery
-```
+### 3. Architecture & Narrow Interception
+- **`FaultRule`**: Immutable record defining target criteria, occurrence limits, and message classes.
+- **`FaultInjector`**: Central deterministic engine maintaining mutable atomic activation counters, rule matching, and metrics recording. Zero overhead and transparent passthrough when disabled.
+- **`FaultInterceptor`**: Narrow adapter interface wired into `MeshSimulatorService`, `AntiEntropyService`, `SettlementService`, and `BridgeIngestionService`.
+- **`ReliabilityMetrics`**: Thread-safe in-memory counters tracking injections, drops, duplicates, retries, and invariant checks.
 
-### Example
+### 4. Machine-Checkable Invariants (I1–I12)
+- **I1 (Packet Identity)**: $\text{packetHash} \equiv \text{SHA-256}(\text{ciphertext})$.
+- **I2 (Transport Deduplication)**: Device stores at most 1 copy of any packet hash.
+- **I3 (Settlement Idempotency)**: At most 1 committed settlement per packet hash.
+- **I4 (Funds Conservation)**: $\sum \text{liquidBalance} + \sum \text{offlineLockedBalance} \equiv \text{InitialTotalSystemFunds}$.
+- **I5 (Non-Negative Escrow)**: Offline wallet remaining escrow $\ge 0$.
+- **I6 (Observable Conflict)**: Conflicting counter collisions permanently recorded as `CONFLICTING` and wallet frozen as `LOCKED_DISPUTED`.
+- **I7 (Connected Component Convergence)**: Reachable nodes achieve identical `stateDigest` after anti-entropy.
+- **I8 (TTL Independence)**: Anti-entropy repairs missing packets regardless of TTL expiration.
+- **I9 (Transient Recoverability)**: Transient DB failures release in-flight locks to allow retries.
+- **I10 (Permanent Terminality)**: Validation failures terminate without retry loops.
+- **I11 (Crash Non-Mutation)**: Node crash/restart does not modify backend ledger.
+- **I12 (Cryptographic Barrier)**: Invalid/corrupted signatures are unconditionally rejected.
 
-```text
-Network:
+### 5. Automated Tests & Results
+Implemented in `DistributedReliabilityTest.java` (25 tests):
+- **Group 1: Isolated Network Faults (7 tests)**:
+  1. `testPacketDropRecoveredBySubsequentAntiEntropy` — PASS
+  2. `testPacketDuplicationSuppressedByAuthoritativeHash` — PASS
+  3. `testReorderedPacketDeliveryObservedAsSequenceGap` — PASS
+  4. `testDelayedPacketArrivalAfterAntiEntropyIsDroppedAsDuplicate` — PASS
+  5. `testPeerUnavailableTriggersAlternatePeerFallback` — PASS
+  6. `testNodeRestartRecoversBufferWithoutCorruptingBackend` — PASS
+  7. `testRepeatedPartitionHealCyclesAchieveEventualConvergence` — PASS
+- **Group 2: Isolated Bridge & Backend Faults (6 tests)**:
+  8. `testBridgeUnavailableKeepsMeshBuffersIntact` — PASS
+  9. `testDuplicateBridgeUploadIdempotentlyDeduplicated` — PASS
+  10. `testLostHttpResponseRecoversCommittedSettlement` — PASS
+  11. `testTransientOptimisticLockExceptionSucceedsOnRetry` — PASS
+  12. `testExhaustedRetriesThrowsTransientExceptionAndReleasesLock` — PASS
+  13. `testPermanentValidationFailureNeverRetried` — PASS
+- **Group 3: Compound & Combination Faults (7 tests)**:
+  14. `testCompoundDropAndAntiEntropy` — PASS
+  15. `testCompoundDelayAndReorderOfflineWalletSequence` — PASS
+  16. `testCompoundDuplicateAndLostResponse` — PASS
+  17. `testCompoundPartitionAndConcurrentPayments` — PASS
+  18. `testCompoundPartitionAndBridgeUnavailable` — PASS
+  19. `testCompoundNodeRestartAndAntiEntropy` — PASS
+  20. `testCompoundDuplicateRequestAndOptimisticLockContention` — PASS
+- **Group 4: Invariant & Property Tests (5 tests)**:
+  21. `testPropertyConservationOfTotalFunds` — PASS
+  22. `testPropertyCommutativeStateDigest` — PASS
+  23. `testPropertyOfflineEscrowCannotBecomeNegative` — PASS
+  24. `testPropertyConflictingCounterAlwaysObservable` — PASS
+  25. `testPropertyZeroInvariantViolationsUnderAdverseConditions` — PASS
 
-A ─── B ─── C
-
-Partition:
-
-A       X       B ─── C
-```
-
-Then reconnect and verify convergence.
-
-### Dashboard controls
-
-Eventually:
-
-```text
-Packet Loss:       20%
-Packet Delay:      500ms
-Duplicate Rate:    10%
-Node Failures:     2
-
-[ RUN EXPERIMENT ]
-```
-
-### Metrics
-
-Measure:
-
-* Settlement success
-* Settlement latency
-* Duplicate rejection
-* Conflict detection
-* Recovery time
-* Gossip convergence
-* Packet delivery rate
+**Total Project Test Suite**: **96 tests run, 0 failures, 0 errors, 0 skipped.**
 
 ### Status
 
-**NOT STARTED**
+**COMPLETED**
 
 ---
 
-# PHASE 6 — Real-Time React Frontend
+# PHASE 6 — Real-Time React Distributed Payment Dashboard
 
 ## Objective
 
-Replace the basic demo dashboard with a professional engineering dashboard.
+Deliver a production-style React dashboard for observing and interacting with the Spring Boot virtual mesh simulator, acting strictly as a visualization and control layer without duplicating domain or financial logic.
 
-### Stack
+### 1. Architectural Principles
+- **Visualization & Control Layer Only**: Zero business logic, balance computations, escrow tracking, sequence counter validations, hash calculations, or invariant audits executed on the client.
+- **Adaptive Polling**: 2000 ms active tab, 10000 ms background/hidden tab, immediate mutation invalidation refetch. Failures exceeding ~5000 ms trigger an explicit `STALE DATA` warning and disable mutation controls. Persistent connection warning displayed on backend outage.
+- **Strict Boundary Integrity**: No WebSockets or SSE; no PostgreSQL, Redis, Android, BLE, Prometheus, or distributed consensus. Legacy `/api/transactions` remains untouched.
+- **Authoritative Server Invariants**: Invariants I1–I12 evaluated dynamically by `InvariantAuditService` on the server and consumed read-only by the dashboard.
 
-```text
-React
-TypeScript
-Tailwind CSS
-WebSocket/SSE
-```
+### 2. Implemented Stack & Directory Structure
+- **Frontend Core**: React 18, TypeScript (strict mode), Vite 5, Tailwind CSS, Lucide React icons.
+- **Frontend Architecture**:
+  ```text
+  frontend/src/
+    layouts/     AppLayout, Header, Sidebar
+    pages/       OverviewPage, MeshPage, WalletsPage, TransactionsPage, ReliabilityPage, FaultInjectionPage
+    components/  common/ (Badge, Button, Card, Modal, StatCard)
+                 mesh/ (TopologyCanvas, DeviceNode, MeshLink, NodeDetailsDrawer)
+                 wallets/ (WalletTable, AllocateModal)
+                 transactions/ (TransactionTable, TxReceiptModal)
+                 reliability/ (InvariantCard, MetricGauge)
+                 faults/ (FaultRuleTable, InjectFaultModal, FaultPresetBar)
+    hooks/       usePolling
+    services/    api (typed backend REST client)
+    types/       strict TypeScript models
+    utils/       formatters, constants, topologyLayout
+  ```
 
-### Pages
+### 3. Backend DTO & API Surface
+- **DTOs** (`com.demo.upimesh.dto`): `DashboardOverviewDto`, `MeshSummaryDto`, `DeviceDetailDto`, `WalletSummaryDto`, `PaginatedTransactionsDto`, `ReliabilityReportDto`, `FaultRuleRequest`.
+- **Endpoints** (`DashboardApiController`):
+  - `GET /api/dashboard/overview` — Lightweight aggregate metrics only.
+  - `GET /api/dashboard/mesh` — Lightweight mesh summary with device list & severed links.
+  - `GET /api/dashboard/mesh/devices/{deviceId}` — On-demand deep node inspection (16 bucket checksums, peer sync tables, full packet hashes).
+  - `GET /api/dashboard/wallets` — Authoritative escrow & liquid balances.
+  - `GET /api/dashboard/transactions` — Paginated and filtered transaction search.
+  - `GET /api/dashboard/reliability` — Server-evaluated I1–I12 invariants and `ReliabilityMetrics`.
+  - `GET /api/faults/rules`, `POST /api/faults/rule`, `DELETE /api/faults/rule/{faultId}`, `POST /api/faults/reset`, `POST /api/faults/toggle` — Fault injection management with strict backend validation.
+- **CORS Configuration** (`WebCorsConfig`): Allows `http://localhost:5173` for `GET`, `POST`, `DELETE`, `OPTIONS` on `/api/**`.
 
-#### 6.1 System Dashboard
-
-Display:
-
-```text
-Online/Offline status
-Mesh nodes
-Pending transactions
-Settled transactions
-Rejected transactions
-Conflicts
-Security events
-```
-
-#### 6.2 Mesh Visualization
-
-Show:
-
-```text
-Phone A
-   │
-   ▼
-Phone B
-   │
-   ▼
-Phone C
-   │
-   ▼
-Bridge
-   │
-   ▼
-Backend
-```
-
-Animate packet propagation.
-
-#### 6.3 Transaction Explorer
-
-Display:
-
-```text
-Transaction ID
-Sender
-Receiver
-Amount
-Timestamp
-Status
-Packet hash
-Hop count
-TTL
-Signature status
-```
-
-#### 6.4 Security Monitor
-
-Display:
-
-```text
-Invalid signatures
-Replay attempts
-Duplicate packets
-Tampered packets
-Double-spend conflicts
-```
-
-#### 6.5 Event Stream
-
-Example:
-
-```text
-21:42:01 PAYMENT_CREATED
-21:42:01 ENCRYPTED
-21:42:02 NODE_A_RECEIVED
-21:42:02 GOSSIP_PROPAGATED
-21:42:04 BRIDGE_RECEIVED
-21:42:05 SIGNATURE_VERIFIED
-21:42:05 IDEMPOTENCY_CLAIMED
-21:42:05 SETTLEMENT_COMMITTED
-```
+### 4. Automated Verification & Testing
+- **Frontend Test Suite** (17 tests across 6 suites in `frontend/src/test/`):
+  - `usePolling.test.ts` (3 tests): Active cadence (2s), hidden tab backoff (10s), immediate mutation refetch.
+  - `TopologyCanvas.test.tsx` (4 tests): Actual device list rendering, fallback dynamic layout, link partition styling, node detail fetch.
+  - `TransactionTable.test.tsx` (3 tests): Pagination controls, status filtering, receipt inspection modal.
+  - `FaultRuleTable.test.tsx` (3 tests): Active rules list, individual rule deletion, empty state.
+  - `ReliabilityPage.test.tsx` (1 test): Authoritative I1–I12 invariant badges and metrics gauges.
+  - `BackendOutage.test.tsx` (3 tests): Stale data banner after 5s outage, mutation controls disabled when stale, persistent disconnection alert.
+- **Backend Test Suite**: 103 tests passing (96 Phase 1–5 baseline + 7 new dashboard controller integration tests), 0 failures, 0 errors.
 
 ### Status
 
-**NOT STARTED**
+**COMPLETED**
 
 ---
 
@@ -1369,7 +1343,535 @@ The objective is to demonstrate how a secure distributed system can maintain tru
 
 ---
 
-# 18. Important Disclaimer
+# 18. Phase 7 — PostgreSQL + Redis Infrastructure (COMPLETED)
+
+### 18.1 Architectural Principle
+**"PostgreSQL is the authoritative financial store. Redis is non-authoritative coordination/cache."**
+
+### 18.2 Schema & Persistence Architecture
+* **Flyway Migrations:** Deterministic SQL migrations (`V1__initial_schema.sql`) managing production schema lifecycle. `ddl-auto=create/create-drop` is strictly prohibited in production.
+* **Authoritative Tables:**
+  * `accounts`: Stores liquid funds and `offline_locked_balance` with non-negative constraints (`NUMERIC(19, 2)`), registered Ed25519 public keys, and optimistic locking (`version`).
+  * `offline_wallets`: Tracks escrow allocations, cumulative settled funds, remaining escrow, monotonic sequence counters, expiry timestamps, and conflict states (`ACTIVE`, `LOCKED_DISPUTED`, etc.).
+  * `transactions`: Permanent ledger record enforcing `UNIQUE(packet_hash)`, sender/receiver foreign keys, and cryptographic audit signatures.
+* **Database Constraints:** Core financial correctness is enforced at the database level:
+  * `UNIQUE(packet_hash)`
+  * `CHECK (balance >= 0)` and `CHECK (offline_locked_balance >= 0)`
+  * `CHECK (settled_amount + remaining_amount <= allocated_amount)`
+  * Foreign key referential integrity with `ON DELETE SET NULL` on self-referencing winning transaction pointers.
+
+### 18.3 Distributed Coordination & Graceful Degradation
+* **Redis Lock Namespace:** `upi:lock:<packetHash>` with explicit 60-second in-flight TTL and 24-hour completion TTL.
+* **Non-Authoritative Resilience:** If Redis is down, in-flight acquisition catches connection failures, increments `redisFallbackTotal`, and falls back to local concurrency gates. The transaction continues to execute safely against the PostgreSQL `UNIQUE(packet_hash)` barrier without duplicate debits or financial corruption.
+
+### 18.4 Dashboard Cache-Aside & Invalidation
+* **Cache Keys:** `upi:cache:dashboard:overview`, `upi:cache:dashboard:mesh`, `upi:cache:dashboard:reliability` with 10-second TTL.
+* **Mutation-Driven Invalidation:** Eviction occurs immediately upon:
+  * Transaction settlement / rejection / conflict
+  * Offline wallet allocation / reconciliation
+  * Mesh topology partition, heal, flush, or sync
+  * Fault rule addition, deletion, toggle, or reset
+
+### 18.5 Verified Durability & Testing
+* **Restart Durability:** Proven via `RestartDurabilityIntegrationTest` across Spring ApplicationContext destruction and recreation.
+* **Redis Failure Resilience:** Proven via `RedisFailureResilienceTest` during simulated Redis outages.
+* **Test Suite:** 111 backend tests (0 failures, 0 errors), 17 frontend tests (0 failures).
+
+---
+
+# 19. Phase 8 — Observability, Metrics & Production Diagnostics (COMPLETED)
+
+### 19.1 Core Observability Principles
+1. **Financial Non-Authoritative Invariant:** All gauges and metrics (including `upi.wallets.escrow.total.allocated`) are strictly observational telemetry. They must **never** be treated as authoritative financial state. Exact financial truth resides solely in PostgreSQL.
+2. **Strict Bounded Cardinality:** Label values are strictly bounded enums and fixed strings (`status`, `reason`, `fault_type`, `device_role`, `result`). High-cardinality values (`packetHash`, `transactionId`, `walletId`, `ownerVpa`, `requestId`, `nonce`) are strictly prohibited in metric tags to prevent TSDB memory leaks.
+3. **Sensitive Data Protection:** Actuator endpoint detail is restricted (`management.endpoint.health.show-details=when_authorized`). No private keys, database passwords, or decrypted payment payloads are ever emitted in logs or metrics.
+4. **Read-Only Telemetry:** Observability code does not alter business logic, state transitions, or transaction outcomes.
+
+### 19.2 Metrics Catalogue
+
+| Metric Name | Type | Tags | Description |
+|---|---|---|---|
+| `upi.transactions.attempted` | Counter | `mode=online\|offline` | Ingestion attempts received at bridge |
+| `upi.transactions.settled` | Counter | `mode=online\|offline` | Successful settlements committed to DB |
+| `upi.transactions.duplicate` | Counter | `stage=idempotency_claim\|db_barrier` | Duplicate packets dropped |
+| `upi.transactions.rejected` | Counter | `reason=signature_invalid\|expired\|...` | Validation rejections (bounded reasons) |
+| `upi.transactions.conflicting` | Counter | `reason=counter_reuse_detected` | Double-spend attempts detected |
+| `upi.transactions.pending.gap` | Counter | - | Out-of-order sequence counter gap events |
+| `upi.transactions.retries` | Counter | `outcome=success\|exhausted` | Optimistic lock retries in settlement |
+| `upi.settlement.latency` | Timer | `mode=online\|offline` | Latency distribution of settlement transactions |
+| `upi.wallets.allocated` | Counter | - | Offline wallet escrow allocations |
+| `upi.wallets.reconciled` | Counter | - | Completed wallet reconciliations |
+| `upi.wallets.disputed` | Counter | - | Wallets transitioned to `LOCKED_DISPUTED` |
+| `upi.wallets.audit.required` | Counter | - | Wallets flagged for manual audit |
+| `upi.wallets.expired` | Counter | - | Expired wallet sync events |
+| `upi.wallets.escrow.total.allocated` | Gauge | - | Observational escrow total (non-authoritative) |
+| `upi.mesh.packets.received` | Counter | `role=node\|bridge` | Mesh packets received across simulated nodes |
+| `upi.mesh.packets.forwarded` | Counter | - | Packets hopped to peers |
+| `upi.mesh.gossip.rounds` | Counter | - | Gossip sync rounds executed |
+| `upi.mesh.sync.operations` | Counter | `result=in_sync\|diff_resolved` | Anti-entropy digest comparison outcomes |
+| `upi.mesh.partitions` | Counter | `action=partition\|heal` | Network topology partition/heal events |
+| `upi.mesh.bridge.flushes` | Counter | - | Bridge upload executions |
+| `upi.mesh.active.nodes` | Gauge | - | Active nodes count in mesh |
+| `upi.mesh.buffered.packets` | Gauge | - | Packets in flight within mesh nodes |
+| `upi.fault.injections` | Counter | `fault_type=NETWORK_PARTITION\|...` | Fault injection attempts |
+| `upi.fault.recoveries` | Counter | `fault_type=NETWORK_PARTITION\|...` | Automated recoveries from faults |
+| `upi.fault.invariant.violations` | Counter | `invariant=I1_NO_DOUBLE_SPEND\|...` | System invariant audit violations |
+| `upi.infra.redis.ops` | Counter | `op=lock_acquire\|lock_complete\|cache_get\|...` | Redis operations executed |
+| `upi.infra.redis.fallbacks` | Counter | `op=lock_acquire\|cache_get\|...` | Fallbacks triggered due to Redis downtime |
+| `upi.infra.cache.hits` | Counter | `cache=dashboard_overview\|...` | Dashboard cache hits |
+| `upi.infra.cache.misses` | Counter | `cache=dashboard_overview\|...` | Dashboard cache misses |
+| `upi.infra.db.retries` | Counter | - | Database transient optimistic lock retries |
+
+### 19.3 Production Diagnostics & Health Model
+* **Correlation IDs (`X-Request-ID`):** Automatically propagated via `CorrelationIdFilter` into SLF4J MDC `[req:<id>]`. Returned in all HTTP response headers for end-to-end tracing.
+* **Custom Health Indicator (`UpiSystemHealthIndicator`):**
+  * `UP` (HTTP 200): PostgreSQL and Redis both operational.
+  * `DEGRADED` (HTTP 200): PostgreSQL operational, Redis unavailable (non-authoritative fallback active).
+  * `DOWN` (HTTP 503): PostgreSQL unreachable (authoritative financial store down).
+
+### 19.4 Operational Alerting Rules (`alert_rules.yml`)
+1. `PostgresUnavailable` (Critical): Backend database down for >1m.
+2. `RedisDegraded` (Warning): Redis cache/lock unavailable; fallback active for >2m.
+3. `HighSettlementLatency` (Warning): P99 settlement latency > 500ms.
+4. `HighTransactionRejectionRate` (Warning): Rejection rate > 15% of total attempts.
+5. `ConflictingTransactionsDetected` (Critical): Counter re-use or double-spend detected.
+6. `InvariantViolationDetected` (Critical): Core financial or consensus invariant violated.
+7. `MeshConvergenceFailure` (Warning): Gossip divergence detected during anti-entropy sync.
+8. `ExcessiveDbRetries` (Warning): Optimistic lock contention rate > 5 retries/sec.
+
+### 19.5 Grafana Production Dashboards
+* `01-system-overview.json`: System health, total throughput, active faults, and invariant status.
+* `02-transactions.json`: Attempted, settled, duplicate, rejected, and conflict rates with P50/P95/P99 latency.
+* `03-wallets-escrow.json`: Wallet allocations, reconciliations, disputed counts, and observational escrow gauge.
+* `04-mesh-convergence.json`: Packet propagation, hop distribution, partition status, and anti-entropy sync.
+* `05-reliability-faults.json`: Active fault injections, automated recovery rate, and zero-violation monitor.
+* `06-infrastructure.json`: PostgreSQL connections/retries, Redis latency/fallbacks, and cache hit ratio.
+
+### 19.6 Verification Results
+* **Backend Test Suite:** 127 automated tests across 16 test classes — 100% passing (0 failures, 0 errors, 0 skipped).
+* **Frontend Test Suite:** 17 Vitest unit and integration tests — 100% passing. Production build succeeds cleanly.
+* **Docker Compose Validation:** Validated multi-container composition with PostgreSQL 16, Redis 7, Prometheus 2.51, and Grafana 10.4.
+
+---
+
+# 20. Phase 9.1 — Cross-Language Cryptographic Compatibility (COMPLETED)
+
+### 20.1 Purpose & Scope
+Phase 9.1 implements deterministic cross-language cryptographic interoperability between the Java 17 Spring Boot backend and the Kotlin Android peripheral library (`:core-crypto`).
+
+### 20.2 Strict Security Notice: Test-Only Deterministic Fixtures
+> [!IMPORTANT]
+> **TEST-ONLY CRYPTOGRAPHIC FIXTURES**:
+> All keys, signatures, and envelopes defined in `upi_crypto_test_vectors_v1.json` are generated from deterministic PRNG seeds solely for automated cross-language verification.
+> 1. **Location Isolation:** Test vector files exist **ONLY** under `src/test/resources/` and `android/core-crypto/src/test/resources/`.
+> 2. **No Production Linkage:** Production source under `src/main/` and `android/**/src/main/` never imports, references, loads, or packages these test keys or vectors.
+> 3. **Non-Production Keys:** These keys must **never** be used in production environments. Production deployments require hardware-backed Keystore/StrongBox keys and KMS/HSM server keys.
+
+### 20.3 Interoperability Guarantee & Test Vectors
+* **Canonicalization:** Byte-for-byte UTF-8 string identity for `v1`, `v3_tx`, `v1_cert`, and `v1_receipt`.
+* **Ed25519 Interoperability:** Java signs $\to$ Kotlin verifies; Kotlin signs $\to$ Java verifies (exact 64-byte RFC 8032 signatures).
+* **Hybrid Envelope Interoperability:** Android-generated envelopes (RSA-2048-OAEP SHA-256/MGF1-SHA-256 + AES-256-GCM 12-byte IV + 128-bit tag) unpack and decrypt cleanly in Java `HybridCryptoService`.
+* **Content Identity:** `packetHash` SHA-256 generates identical 64-character lowercase hexadecimal digests.
+
+### 20.4 Verification Suite
+* **Backend Java Tests:** 139 tests passing (129 Phase 1–8 tests + 10 cross-language compatibility tests in `CrossLanguageCryptoCompatibilityTest`).
+* **Android Kotlin Tests:** 15 unit tests passing in `core-crypto` (covering canonicalization, Ed25519, cert/receipt verification, hybrid encryption, and packet hashing).
+
+---
+
+# 21. Phase 9.2 — Android Room Persistence + Offline Wallet Engine (COMPLETED)
+
+### 21.1 Architectural Principle
+> [!IMPORTANT]
+> **LOCAL EXECUTION CACHE VS AUTHORITATIVE LEDGER**:
+> Android local state is a durable execution/replication cache. PostgreSQL remains the authoritative financial ledger.
+> The Android client never claims authoritative balance, final settlement, global idempotency, or dispute arbitration.
+
+### 21.2 Currency Unit Standard
+All monetary values in `:core-database` entities, DAOs, and engines are stored and manipulated strictly as **`Long` integer paisa** (₹1.00 = `100L`, ₹1,500.00 = `150000L`). Floating-point types (`Float`, `Double`) are prohibited for financial calculations.
+
+### 21.3 Local Settlement Semantics & Escrow Terminology
+Local payment creation is a pending offline intent; authoritative settlement occurs only at PostgreSQL.
+* `allocatedAmountPaisa`: Total offline spending allowance granted by the backend.
+* `remainingAmountPaisa`: Spendable local allowance (`allocatedAmountPaisa - localSpentAmountPaisa`). Decremented upon local spend.
+* `localSpentAmountPaisa`: Cumulative offline spends committed locally on this device. Incremented upon local spend.
+* `settledAmountPaisa`: Authoritative settled amount. **NEVER** incremented by local offline spend. It is updated **ONLY** when a cryptographically verified backend `SettlementReceipt` arrives.
+
+### 21.4 Key Storage Architecture & Memory Hygiene
+* **Master Key:** Android Keystore AES-256-GCM under stable alias `upi_mesh_master_key`.
+* **Encrypted at Rest:** Device Ed25519 private keys are encrypted at rest with random 12-byte IV and 128-bit authentication tag.
+* **Non-Exportable:** Master key cannot be exported from hardware security module / KeyStore.
+* **Memory Hygiene:** Best-effort RAM zeroization is applied to sensitive byte arrays (`Arrays.fill(data, 0.toByte())`) upon completion of cryptographic operations. (Documented as best-effort memory hygiene due to runtime garbage collection).
+
+### 21.5 Room Entity Schema & Indexes
+1. `DeviceIdentity` (`device_identities`):
+   - PK: `deviceId: String`
+   - Indexed: `owner_vpa`
+   - Fields: `publicKey`, `encryptedPrivateKey`, `encryptionIv`, `enrollmentState`, `createdAt`, `updatedAt`
+2. `OfflineWallet` (`offline_wallets`):
+   - PK: `walletId: String`
+   - Indexed: `owner_vpa`
+   - Fields: `ownerPublicKey`, `allocatedAmountPaisa`, `localSpentAmountPaisa`, `settledAmountPaisa`, `remainingAmountPaisa`, `sequenceCounter`, `walletEpoch`, `validFrom`, `validUntil`, `certificateJson`, `status`, `updatedAt`
+   - States: `ACTIVE`, `EXPIRED`, `LOCKED_DISPUTED`, `AUDIT_REQUIRED`, `RECONCILED_CLOSED`, `PENDING_RECONCILE`
+3. `OutboundPayment` (`outbound_payments`):
+   - PK: `paymentId: String` (UUID)
+   - Indexed: `wallet_id`, unique composite `(wallet_id, sequence_counter)`, `packet_hash`
+   - Fields: `amountPaisa`, `cumulativeAmountPaisa`, `receiverVpa`, `nonce`, `packetHash`, `ciphertext`, `state`, `createdAt`, `updatedAt`, `retryCount`
+   - States: `CREATED`, `ENCRYPTED`, `READY_FOR_TRANSPORT`, `PENDING_BRIDGE`, `SETTLEMENT_CONFIRMED`, `REJECTED`, `CONFLICTING`, `EXPIRED`
+4. `ReceivedPacket` (`received_packets`):
+   - PK: `packetHash: String`
+   - Fields: `packetId`, `ciphertext`, `ttl`, `hopCount`, `receivedAt`, `uploadedToBridge`, `status`, `updatedAt`
+   - Invariant: Local duplicate rejection optimization.
+5. `PacketFragment` (`packet_fragments`):
+   - Composite PK: `(packetHash, chunkIndex)`
+   - Indexed: `packet_hash`
+   - Fields: `totalChunks`, `data: ByteArray`, `receivedAt`
+6. `SettlementReceipt` (`settlement_receipts`):
+   - PK: `transactionId: Long`
+   - Indexed: `packet_hash`
+   - Fields: `counter`, `status`, `settledAt`, `serverSignature`
+   - Rule: Signature verified before storage.
+
+### 21.6 Atomic Payment Creation Semantics
+A single atomic database transaction performs:
+1. Validate wallet (owner matches, active status, unexpired).
+2. Validate counter (`nextCounter == sequenceCounter + 1`, no rollback).
+3. Validate remaining allowance (`remainingAmountPaisa >= amountPaisa`).
+4. Update wallet balances (`remainingAmountPaisa -= amountPaisa`, `localSpentAmountPaisa += amountPaisa`, `sequenceCounter++`).
+5. Insert `OutboundPayment` with immutable intent data in `CREATED` state.
+6. Generate canonical `v3_tx`, sign with decrypted device Ed25519 key, hybrid-encrypt payload with server RSA key, compute `packetHash`.
+7. Update `OutboundPayment` with `ciphertext`, `packetHash`, and state `READY_FOR_TRANSPORT`.
+8. Commit transaction. Only committed payments are eligible for subsequent transport.
+
+### 21.7 Deterministic Restart & Crash Recovery
+The `StartupRecoveryManager`:
+* `CREATED`: Resumes preparation from persisted immutable intent without altering `nonce`, `sequenceCounter`, `amountPaisa`, or `receiverVpa`.
+* `ENCRYPTED`: Verifies `packetHash == SHA-256(ciphertext)` and transitions to `READY_FOR_TRANSPORT`.
+* `READY_FOR_TRANSPORT`, `PENDING_BRIDGE`, `SETTLEMENT_CONFIRMED`: Preserved exactly.
+* `REJECTED`, `CONFLICTING`, `EXPIRED`: Preserved as terminal states.
+* **No Regeneration:** No recovery path ever creates a second logical payment or duplicates sequence numbers.
+* **Fragment Hygiene:** Purges stale packet fragments older than TTL window (24 hours).
+
+### 21.8 Verification Results
+* **Android Test Suite:** 44 tests passing (15 in `:core-crypto` + 29 in `:core-database`).
+  - `RoomDaoAndPersistenceTest` (5 tests): CRUD, paisa enforcement, deduplication, composite keys, process restart file reload.
+  - `DatabaseMigrationTest` (3 tests): v1 schema creation, v1 to v2 migration, non-destructive migration guarantee.
+  - `KeyStoreManagerTest` (3 tests): AES-256-GCM roundtrip, tamper detection, best-effort zeroization.
+  - `OfflineWalletEngineAndAtomicityTest` (7 tests): Atomic commit, Test A (settledAmount untouched), Test B (remaining allowance decreased), sequence rollback rejection, escrow exhaustion, expired wallet rejection, self-spend/unauthorized spender rejection.
+  - `StartupRecoveryAndDeterminismTest` (6 tests): Test C (exact intent preserved on restart), Test D (ciphertext/hash preserved), Test E (no duplicate logical payments), crash before transport survival, stale fragment purge, startup expired wallet detection.
+  - `SettlementReceiptAndAuthorityTest` (3 tests): Test F (receipt is only transition updating settledAmount), forged receipt rejection, No False Authority guarantees.
+  - `ObservabilityMetricsTest` (2 tests): Counters and bounded labels.
+* **Backend Java Tests:** 139 tests passing (100% green).
+
+---
+
+# 22. Phase 9.3 — Android BLE GATT Transport Layer
+
+## 22.1 Core Architectural Principles & Untrusted Transport Boundary
+* **BLE is Untrusted Transport:** BLE connection security or lack thereof does NOT affect financial correctness. Application-layer payload signatures (Ed25519) and hybrid encryption (RSA-2048-OAEP + AES-256-GCM) provide end-to-end security.
+* **No Pairing/Bonding Prerequisite:** BLE pairing or bonding is explicitly NOT required for protocol correctness.
+* **PostgreSQL & Backend Financial Authority:** Receiving a packet over BLE creates a local `ReceivedPacket` in Room for later gossip/bridge propagation; it **never** increments `settledAmountPaisa` and **never** claims transaction finality.
+
+## 22.2 Approved 128-Bit BLE UUIDs
+* **Service UUID:** `e8a30001-7c2b-4e6a-a83d-3b9e8a9f24c0`
+* **Control Characteristic UUID:** `e8a30002-7c2b-4e6a-a83d-3b9e8a9f24c0` (Write / Notify)
+* **Packet Characteristic UUID:** `e8a30003-7c2b-4e6a-a83d-3b9e8a9f24c0` (Write Without Response / Notify)
+* **State Characteristic UUID:** `e8a30004-7c2b-4e6a-a83d-3b9e8a9f24c0` (Read / Notify)
+
+## 22.3 Exact 16-Byte Fixed UPI Frame Header
+```text
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          Magic (0x5550)       |    Version    |  MessageType  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     Flags     | FragmentIndex | TotalFragments|  TransferId   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       TransferId (cont)       |      PacketHashPrefix (24b)   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| PacketHash (c)|     PayloadLength (16b)       |  CRC16-CCITT  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Payload (0..N bytes)                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+* **Byte 0..1:** Magic (`0x55, 0x50` = 'U', 'P')
+* **Byte 2:** Protocol Version (`0x01`)
+* **Byte 3:** Message Type Code (`0x01..0x0A`)
+* **Byte 4:** Flags bitmask (`0x01` = Last Fragment)
+* **Byte 5:** Fragment Index (`0..63`)
+* **Byte 6:** Total Fragments (`1..64`)
+* **Byte 7..8:** Transfer ID (`0..65535`, Big-Endian)
+* **Byte 9..11:** Packet Hash Prefix (3 bytes / 24 bits)
+* **Byte 12..13:** Payload Length (`0..65535`, Big-Endian)
+* **Byte 14..15:** CRC-16-CCITT (`0..65535`, Big-Endian over header[0..13] + payload)
+
+## 22.4 Dynamic MTU Handling & Formula
+* **Minimum Negotiated MTU:** 64 bytes
+* **Preferred MTU:** 517 bytes
+* **Formula:** $\text{Effective Payload Size} = \text{Negotiated MTU} - 3\text{ (ATT Overhead)} - 16\text{ (UPI Header)} = M - 19$
+* **Error:** Negotiated MTU $< 64$ throws `MTU_TOO_SMALL`.
+
+## 22.5 Fragmentation & ReassemblyEngine
+* **Maximum Fragments:** 64 (1..64)
+* **Out-of-Order Acceptance:** Fragments arrive in any order and are buffered in memory and persisted into Room `PacketFragmentDao`.
+* **Idempotent Duplicate:** Same `transferId` + `fragmentIndex` + identical data is safely ignored.
+* **Conflicting Duplicate:** Same `transferId` + `fragmentIndex` + different data rejected with `DUPLICATE_FRAME`.
+* **Integrity Validation:** Upon receiving all fragments, ciphertext is assembled and SHA-256 hash is compared to `packetHash`. On mismatch, throws `UNKNOWN_PACKET_HASH`.
+* **Room Integration:** On valid reassembly, creates and inserts `ReceivedPacket` into Room and purges fragments.
+* **Restart Recovery:** Recovers incomplete transfer sessions from Room `PacketFragmentDao`.
+* **Timeout:** Incomplete buffers exceeding 60s timeout are purged with `REASSEMBLY_TIMEOUT`.
+
+## 22.6 Deterministic Protocol Errors
+1. `BAD_MAGIC` (0x01)
+2. `UNSUPPORTED_VERSION` (0x02)
+3. `INVALID_MSG_TYPE` (0x03)
+4. `OVERSIZED_PAYLOAD` (0x04)
+5. `CRC_FAILURE` (0x05)
+6. `INVALID_FRAG_INDEX` (0x06)
+7. `EXCESSIVE_FRAGMENTS` (0x07)
+8. `REASSEMBLY_TIMEOUT` (0x08)
+9. `DUPLICATE_FRAME` (0x09)
+10. `UNKNOWN_PACKET_HASH` (0x0A)
+11. `RATE_LIMIT_EXCEEDED` (0x0B)
+12. `MTU_TOO_SMALL` (0x0C)
+
+## 22.7 Resource Boundaries & Rate Limiting
+* Maximum connected peers: 4
+* Maximum total reassembly memory: 2 MB
+* Maximum active reassembly buffers: 8
+* Maximum control message size: 1024 bytes
+* Maximum packet transfer size: 64 KB
+* Maximum local mesh storage target: 10 MB
+* Rate Limiting: HELLO (5/s), Control (20/s), Chunks (100/s), Connection attempts (10/min) per peer.
+
+## 22.8 Verification Results
+* **Android Test Suite:** 79 tests passing (100% green).
+  - `:core-crypto`: 15 tests
+  - `:core-database`: 29 tests
+  - `:core-transport`: 35 tests
+    * `BleUuidsAndRolesTest` (4 tests)
+    * `Crc16CcittTest` (6 tests)
+    * `BleFrameCodecTest` (12 tests)
+    * `MtuManagerTest` (5 tests)
+    * `FragmentationEngineTest` (6 tests)
+    * `ReassemblyManagerTest` (11 tests)
+    * `TransportLimitsAndRateLimitTest` (7 tests)
+    * `HelloCapabilityTest` (2 tests)
+    * `FakeBleCentralPeripheralIntegrationTest` (1 test)
+* **Backend Java Tests:** 139 tests passing (100% green).
+
+---
+
+# 23. Phase 9.4 — Android BLE Mesh Gossip & Anti-Entropy Synchronization Layer
+
+## 23.1 Core Architecture & Synchronization Boundary
+* **Hybrid Synchronization:** Combines TTL-limited epidemic push (fast forward propagation) with pairwise anti-entropy pull (eventual convergence across reachable devices).
+* **Authoritative Packet Identity:** Cryptographic hash `packetHash = SHA-256(ciphertext)`. Used exclusively for deduplication, state digests, bucket checksums, set-difference calculation, and synchronization requests.
+* **No Financial Authority Mutation:** The mesh synchronization layer is strictly an untrusted peer-to-peer data replication transport. Spring Boot and PostgreSQL remain the sole authoritative arbiters of wallet balances, monotonic counters, and settlement receipts. Local mesh replication never increments `settledAmountPaisa` or creates synthetic settlement approvals.
+* **Core Distinction:** "Anti-entropy provides eventual state convergence between reachable peers; it does not provide distributed financial consensus."
+
+## 23.2 Deterministic State Digest Algorithm
+* **Empty Collection:** `SHA-256("EMPTY")`.
+* **Populated Collection:** All lowercase 64-character hex `packetHash` strings are normalized, deduplicated, sorted in canonical lexicographical order, concatenated with newline (`\n`) delimiters, and hashed via SHA-256.
+* **Independence:** Independent of Room row insertion order, JVM iteration order, and platform endianness. Identical sets of packets produce identical 32-byte digests on all devices.
+
+## 23.3 16 Prefix-Bucket Divergence Isolation
+* **Prefix Slicing:** Partitions packet hashes into exactly 16 buckets ($0..15$) based on the first 4 bits (`0..f`) of `packetHash`.
+* **Bucket Checksum:** Computed from lexicographically sorted hashes in that bucket (or `SHA-256("EMPTY")` if empty).
+* **Fast Divergence Detection:** Peers exchange 16 bucket checksums to pinpoint divergent slices without transmitting entire hash catalogs.
+
+## 23.4 Pairwise Anti-Entropy State Machine & Session Flow
+```text
+1. HELLO exchanged upon BLE connection
+2. Local STATE_SUMMARY generated & exchanged
+3. If digests match -> session completes immediately (O(1) exit)
+4. If digests differ -> exchange BUCKET_CHECKSUMS (16 buckets)
+5. Identify divergent buckets -> exchange hashes for divergent buckets only
+6. Compute symmetric set difference:
+   missingLocally = remoteHashes - localHashes
+   missingRemotely = localHashes - remoteHashes
+7. Emit bounded SYNC_REQUEST (max 50 packets per batch)
+8. Stream packets over BLE transport -> verify SHA-256(ciphertext) == packetHash
+9. Idempotent storage into Room ReceivedPacketDao (OnConflictStrategy.IGNORE)
+10. Complete session with SYNC_ACK
+```
+
+## 23.5 TTL-Limited Epidemic Push Gossip
+* **TTL Rules:** `ttl` decrements on each forward hop; `hopCount` increments.
+* **Push Expiry:** When `ttl == 0`, epidemic push forwarding halts. (Anti-entropy discovery remains fully available regardless of TTL).
+* **Bounded Fan-Out:** Maximum 3 target connected peers.
+* **Loop Suppression:** Never forwards back to the immediate source peer.
+* **Deduplication:** Uses a bounded cache to prevent repeated broadcasts to the same peer.
+
+## 23.6 Resource Boundaries & Concurrency Limits
+* **Maximum Concurrent Mesh Sessions:** 8
+* **Maximum Connected Peers:** 4
+* **Maximum Synchronization Batch Size:** 50 packets
+* **Control Message Payload Size:** $\le 1024$ bytes
+
+## 23.7 Verification Results
+* **Android Test Suite:** 122 tests passing (100% green).
+  - `:core-crypto`: 15 tests
+  - `:core-database`: 29 tests
+  - `:core-transport`: 35 tests
+  - `:core-mesh`: 43 tests
+    * `StateDigestBuilderTest` (5 tests)
+    * `BucketChecksumBuilderTest` (5 tests)
+    * `SetDifferenceCalculatorTest` (4 tests)
+    * `SyncBatchPlannerTest` (5 tests)
+    * `MeshSyncStateMachineTest` (5 tests)
+    * `GossipForwarderTest` (5 tests)
+    * `MeshSynchronizerIntegrationTest` (4 tests)
+    * `PartitionHealConvergenceTest` (2 tests)
+    * `MeshEngineConcurrencyAndLimitsTest` (5 tests)
+    * `MeshReceiptAndSecurityTest` (3 tests)
+* **Backend Java Tests:** 139 tests passing (100% green).
+
+---
+
+# 24. Phase 9.5 — Android WAN Bridge Ingestion Layer
+
+## 24.1 Core Architecture & Financial Authority Boundary
+* **Bridge as Untrusted Gateway:** A bridge-capable Android device acts as an untrusted forwarder connecting the offline BLE mesh (Room persistence) to the central authoritative Spring Boot HTTPS API (`/api/bridge/ingest` $\to$ PostgreSQL 16).
+* **Zero Local Financial Authority:**
+  - The Android bridge device possesses ZERO financial authority.
+  - HTTP 200 upload success means *"submitted to backend for authoritative processing"*, NOT *"financially settled"*.
+  - The bridge must NEVER mutate `settledAmountPaisa` based on HTTP upload response alone.
+  - Local `settledAmountPaisa` updates **ONLY** upon cryptographically verifying an authentic, server-signed `SettlementReceipt` (signed with the server's Ed25519 issuer key).
+* **Authoritative Receipt Enforcement (Strict Non-Inference Rule):**
+  - The backend response is authoritative for receipt data.
+  - The client must **NEVER** infer, fabricate, or locally synthesize `SettlementReceipt` fields (e.g. `transactionId`, `counter`, `settledAt`).
+  - Only construct/verify the receipt representation when all required fields are explicitly present in the backend response and match the canonical receipt format (`v3_receipt`).
+  - If required receipt data is absent, incomplete, or inconsistent:
+    * Do not update `settledAmountPaisa`
+    * Do not mark the payment settled
+    * Classify the response as invalid/permanent according to the error model.
+
+## 24.2 WAN Ingestion Flow & Queue Management
+```text
+OFFLINE BLE MESH
+       │
+       ▼
+Room `received_packets` (uploadedToBridge = false)
+       │
+       ▼
+WanQueueManager (batch limit <= 50, in-flight lease gate)
+       │
+       ▼
+NetworkConnectivityProvider (Active Internet Detection)
+       │
+       ▼
+HttpBackendApiClient (POST /api/bridge/ingest with X-Bridge-Node-Id, X-Hop-Count, X-Request-ID)
+       │
+       ▼
+Authoritative Spring Boot Backend (PostgreSQL 16 settlement & Ed25519 receipt generation)
+       │
+       ▼
+WanErrorClassifier & BridgeReceiptValidator (Canonical receipt verification)
+       │
+       ├── SETTLED (Valid receipt verified) → Mark uploaded, insert SettlementReceipt, update settledAmountPaisa
+       ├── DUPLICATE_DROPPED → Mark uploaded, return existing settlement if available
+       ├── PENDING_SEQUENCE_GAP → Mark uploaded at bridge (staged on backend awaiting missing counter)
+       ├── TRANSIENT_FAILURE (408/429/5xx) → In-flight lease released, exponential backoff with jitter
+       ├── CONFLICTING (Double Spend) → Mark uploaded, flag local OutboundPayment CONFLICTING, freeze disputed wallet
+       └── PERMANENT (400/401/403/INVALID) → Mark uploaded, flag OutboundPayment REJECTED
+```
+
+## 24.3 Core Bridge Module Components (`android/core-bridge`)
+1. `role/BridgeRole.kt`:
+   - `DeviceRole` (`PAYER`, `RELAY`, `MERCHANT`, `BRIDGE`).
+   - `BridgeConfig` (batch size limits $\le 50$, backoff configuration, toggleable capabilities).
+   - `BridgeCapabilityManager` (thread-safe role switching, active bridge eligibility).
+2. `network/NetworkConnectivityProvider.kt`:
+   - Network connectivity abstraction (`isWanConnected()`, `observeWanConnectivity()`).
+   - `DefaultNetworkConnectivityProvider` (Android `ConnectivityManager` + `NetworkCapabilities.NET_CAPABILITY_INTERNET` & `NET_CAPABILITY_VALIDATED`).
+   - `FakeNetworkConnectivityProvider` (deterministic unit test harness for offline/online transitions).
+3. `client/WanIngestResponse.kt` & `client/BackendApiClient.kt`:
+   - Structured ingestion response DTO with `outcome`, `packetHash`, `transactionId`, `counter`, `settledAt`, `receiptSignature`, `reason`, `httpStatusCode`.
+   - `HttpBackendApiClient`: JSON over HTTPS with mandatory tracking headers (`X-Bridge-Node-Id`, `X-Hop-Count`, `X-Request-ID`), connection and read timeouts (15s).
+   - `FakeBackendApiClient`: Test double supporting timeout simulation, network drops, and sequential response scripting.
+4. `retry/WanErrorClassifier.kt`:
+   - Deterministic classification: `RETRYABLE`, `PERMANENT`, `TERMINAL_CONFLICT`, `IGNORED_DUPLICATE`.
+   - `WanBackoffPolicy`: Truncated exponential backoff ($2^n \times \text{base}$ with jitter, bounded by `maxBackoffMs`).
+5. `receipt/BridgeReceiptValidator.kt`:
+   - Reconstructs canonical `v3_receipt` byte stream (`receipt\n{txId}\n{packetHash}\n{counter}\n{settledAt}`).
+   - Validates Ed25519 issuer signature against trusted server public key.
+   - Enforces positive numeric invariants and non-empty string fields.
+6. `queue/WanQueueManager.kt`:
+   - Room-backed FIFO queue over `ReceivedPacketDao`.
+   - Enforces batch limit $\le 50$.
+   - In-flight lease concurrency gate to prevent concurrent double uploads.
+7. `sync/WanBridgeSyncEngine.kt`:
+   - Orchestrates bounded batch synchronization loop.
+   - Preserves offline/online state transitions, crash recovery, and atomic Room updates.
+8. `work/WanUploadWorker.kt`:
+   - WorkManager integration for background scheduling.
+   - Returns `WanWorkerResult.SUCCESS`, `WanWorkerResult.RETRY`, or `WanWorkerResult.FAILURE`.
+9. `metrics/WanBridgeMetrics.kt`:
+   - Telemetry counters: `packetsUploaded`, `packetsRetried`, `packetsPermanentlyFailed`, `packetsConflicting`, `receiptsVerified`, `receiptsRejected`, `queueDepth`, `activeLeases`.
+
+## 24.4 Verification Results
+* **Android Test Suite:** 165 tests passing (100% green).
+  - `:core-crypto`: 15 tests
+  - `:core-database`: 48 tests
+  - `:core-transport`: 25 tests
+  - `:core-mesh`: 32 tests
+  - `:core-bridge`: 45 tests
+    * `BridgeRoleAndCapabilityTest` (4 tests)
+    * `NetworkConnectivityTest` (2 tests)
+    * `HttpBackendApiClientTest` (4 tests)
+    * `WanErrorClassifierTest` (3 tests)
+    * `BridgeReceiptValidationTest` (10 tests)
+    * `WanQueueManagerTest` (4 tests)
+    * `WanBridgeMetricsTest` (1 test)
+    * `WanUploadWorkerTest` (4 tests)
+    * `WanBridgeSyncEngineIntegrationTest` (13 tests)
+* **Backend Java Tests:** 137 tests passing (100% green).
+* **Frontend React Tests:** 17 tests passing (100% green).
+* **Total Automated Tests:** 332 tests passing across the entire repository.
+
+---
+
+# 25. Phase 9.6A — Android Hardware Harness Enablement
+
+## 25.1 Purpose & Boundary
+Phase 9.6A establishes the physical hardware enablement and diagnostic harness for the Android subsystem. It unblocks physical testing across real RF Bluetooth controllers, Android Keystore instances, and local development networks while strictly maintaining the core architectural invariant:
+* **Zero Financial Authority on Mobile:** Android BLE transport, mesh replication, Room database, and the WAN bridge are non-authoritative. Spring Boot and PostgreSQL remain the sole financial authorities.
+* **Strict Non-Inference:** No receipt field (`transactionId`, `counter`, `settledAt`, `packetHash`, `serverSignature`) is ever fabricated or inferred.
+
+## 25.2 Key Implementations
+1. **Android Application Module (`:app`):**
+   - Configured in `android/settings.gradle.kts` and `android/app/build.gradle.kts`.
+   - Assembles application package and artifact `upi-mesh-harness-app-1.0.0.jar`.
+2. **Concrete Android BLE Platform Driver (`AndroidBlePlatformDriver`):**
+   - Implements `BleTransport` bridging core-transport abstractions to platform Bluetooth APIs (`BluetoothManager`, `BluetoothLeScanner`, `BluetoothLeAdvertiser`, `BluetoothGattServer`, `BluetoothGattCallback`).
+   - Preserves approved 128-bit UUIDs (`e8a30001-...` through `e8a30004-...`).
+   - Enforces ATT MTU bounds ($\ge 64$ bytes, preferred 517 bytes) and CRC-16-CCITT framing validation.
+3. **Android SQLite / Persistence Abstraction:**
+   - Unified `UpiMeshDatabase` interface supporting JVM SQLite-JDBC for unit testing and Android SQLite framework runtime.
+4. **Scoped Network Security Configuration (`network_security_config.xml`):**
+   - Enforces HTTPS by default for all production traffic; strictly scopes cleartext HTTP to development endpoints (`10.0.2.2`, `localhost`, `192.168.x.x`).
+5. **Runtime Permission Management (`BlePermissionManager`):**
+   - Dynamically evaluates legacy API $\le 30$ permissions (`BLUETOOTH`, `BLUETOOTH_ADMIN`, `ACCESS_FINE_LOCATION`) vs modern API $\ge 31$ permissions (`BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT`).
+6. **Hardware Test Harness Activity & UI:**
+   - Minimal diagnostic UI presenting device identity, role, BLE advertising/scanning status, connected peer, negotiated MTU, and WAN bridge queue depth.
+   - Zero financial logic in UI.
+
+## 25.3 Verification Results
+* **Automated Tests:** 332 tests passing across all layers:
+  - `:core-crypto` (15 tests)
+  - `:core-database` (48 tests)
+  - `:core-transport` (25 tests)
+  - `:core-mesh` (32 tests)
+  - `:core-bridge` (45 tests)
+  - `:app` (13 tests: permission manager, BLE driver architecture, network security scoping, harness state formatting)
+  - Backend Spring Boot Java (137 tests)
+  - Frontend React TypeScript (17 tests)
+* **Physical Tests Status:** Physical hardware test cases P9.6-001 through P9.6-029 remain unexecuted and pending physical device availability.
+
+---
+
+# 26. Important Disclaimer
 
 This is an engineering/research prototype inspired by offline digital payment concepts.
 
@@ -1381,3 +1883,5 @@ It is NOT:
 * A guarantee of real-world offline monetary settlement
 
 All security and consistency claims must be limited to what is actually implemented and experimentally verified.
+
+

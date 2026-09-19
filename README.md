@@ -1,550 +1,588 @@
-# UPI Offline Mesh — Demo
+# UPI Without Internet — Offline Distributed Payment System
 
-A Spring Boot backend that demonstrates **offline UPI payments routed through a Bluetooth-style mesh network**. You're in a basement with zero connectivity. You send your friend ₹500. Your phone encrypts the payment, broadcasts it to nearby phones, and the packet hops device-to-device until *some* phone walks outside, gets 4G, and silently uploads it to this backend. The backend decrypts, deduplicates, and settles.
+An offline-first distributed payment prototype implementing cryptographic offline wallet authorization, peer-to-peer BLE mesh gossip with anti-entropy synchronization, and deferred authoritative settlement via WAN bridge gateways to an idempotent Spring Boot and PostgreSQL ledger.
 
-This repo is the **server side** of that system, plus a software simulator of the mesh so you can demo the whole flow on a single laptop without any real Bluetooth hardware.
-
----
-
-## Table of Contents
-
-1. [What this demo proves](#what-this-demo-proves)
-2. [How to run it](#how-to-run-it)
-3. [The demo flow (step by step)](#the-demo-flow-step-by-step)
-4. [Architecture](#architecture)
-5. [The three hard problems and how they're solved](#the-three-hard-problems-and-how-theyre-solved)
-6. [File-by-file walkthrough](#file-by-file-walkthrough)
-7. [API reference](#api-reference)
-8. [Tests](#tests)
-9. [What's NOT real (and what would change for production)](#whats-not-real-and-what-would-change-for-production)
-10. [Honest limitations of the concept](#honest-limitations-of-the-concept)
+![Java 17](https://img.shields.io/badge/Java-17-007396?style=flat-square&logo=openjdk&logoColor=white)
+![Spring Boot 3.3.5](https://img.shields.io/badge/Spring%20Boot-3.3.5-6DB33F?style=flat-square&logo=springboot&logoColor=white)
+![Kotlin 1.9.20](https://img.shields.io/badge/Kotlin-1.9.20-7F52FF?style=flat-square&logo=kotlin&logoColor=white)
+![Android SDK 34](https://img.shields.io/badge/Android%20SDK-34-3DDC84?style=flat-square&logo=android&logoColor=white)
+![React 18](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)
+![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white)
+![Redis 7](https://img.shields.io/badge/Redis-7-DC382D?style=flat-square&logo=redis&logoColor=white)
+![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
+![Automated Tests](https://img.shields.io/badge/Tests-376%20Passing-brightgreen?style=flat-square)
 
 ---
 
-## What this demo proves
+## 1. Overview
 
-The system shows three things working end to end:
+Standard digital payment architectures (e.g., standard UPI) require continuous, real-time bidirectional connectivity between the payer's mobile device, payment switches (such as NPCI), and issuing/acquiring bank cores at the moment of payment creation. In environments with zero or intermittent network coverage—such as underground transit, basements, remote rural areas, disaster zones, or congested public gatherings—traditional digital payments completely fail.
 
-1. **A payment can travel from sender to backend through untrusted intermediaries** without any of them being able to read or tamper with it. (Hybrid RSA + AES-GCM encryption.)
-2. **Even if the same payment reaches the backend simultaneously through multiple bridge nodes, it settles exactly once.** (Idempotency via atomic compare-and-set on the ciphertext hash.)
-3. **A tampered or replayed packet is rejected** before it touches the ledger.
+Ordinary online payment protocols cannot simply be deployed offline:
+- Without direct access to an authoritative ledger, an untrusted client cannot verify whether a payer has sufficient funds or has already spent those funds elsewhere.
+- An offline payer could clone an application or replay previously signed payment instructions.
+- Intermediary nodes forwarding transactions across an ad-hoc mesh could inspect, tamper with, or drop payment data.
 
-You'll see all three in the dashboard.
+This project implements a **mesh-routed deferred settlement system**:
+1. **Offline Wallet Authorization:** A payer signs an authenticated payment instruction against a pre-allocated, server-signed offline escrow allowance using an internal monotonic sequence counter.
+2. **Untrusted BLE Mesh Propagation:** The encrypted payment packet propagates hop-by-hop across nearby peer devices using Bluetooth Low Energy (BLE) GATT framing, epidemic gossip, and deterministic anti-entropy synchronization.
+3. **WAN Gateway Ingestion:** When any peer with the packet encounters an active internet connection, it acts as an untrusted WAN bridge, uploading the packet to the central backend.
+4. **Authoritative Backend Settlement:** The backend verifies cryptographic signatures, detects sequence forks or duplicate deliveries, debits the sender's escrow account, credits the recipient, commits the transaction to an ACID PostgreSQL ledger, and issues an Ed25519-signed settlement receipt.
+
+> **Crucial Financial Boundary:**  
+> **PostgreSQL and the Spring Boot backend remain the sole financial authority.**  
+> Android devices, BLE transports, Room databases, and mesh gossip layers operate strictly as non-authoritative replication and execution caches. Receiving a packet locally or observing an HTTP 200 upload response does **not** constitute financial settlement. Settlement occurs only when committed to the authoritative PostgreSQL database.
 
 ---
 
-## How to run it
+## 2. What Makes This Project Interesting
+
+This repository focuses on distributed systems, applied cryptography, and fintech reliability engineering:
+
+- **Offline Spending Authorization:** Escrow-backed offline wallets with server-signed certificates bounding total authorized financial exposure.
+- **Cryptographic Identity & Privacy:** End-to-end payload confidentiality and tamper-proofing via hybrid encryption (RSA-2048-OAEP + AES-256-GCM) combined with sender authorization via Ed25519 digital signatures.
+- **Durable Local State:** AndroidX Room/SQLite persistence storing local wallet balances in integer paisa (`Long`), tracking immutable outbound intents, and managing fragmented packets across application restarts.
+- **Custom BLE GATT Framing:** A 16-byte binary framing protocol with magic bytes, transfer tracking, CRC-16-CCITT integrity checks, and dynamic ATT MTU payload calculation ($M - 19$).
+- **Hybrid Mesh Synchronization:** Combines fast epidemic push gossip (TTL-bounded) with deterministic anti-entropy pull (root state digests and 16 prefix-bucket checksums) to heal network partitions without central coordination.
+- **Multi-Tier Duplicate Suppression:** Fast-path deduplication via Redis distributed locks and in-memory gates, backed by a hard relational `UNIQUE(packet_hash)` database constraint.
+- **Monotonic Sequence Fork Detection:** Server-side state machine that detects counter collisions, distinguishes out-of-order sequence gaps from double-spend attempts, freezes disputed wallets (`LOCKED_DISPUTED`), and records auditable dispute records.
+- **Cryptographically Signed Receipts:** Settlement proof generated exclusively by the backend issuer key over canonical receipt bytes (`v3_receipt`), verified by Android clients before marking funds settled.
+- **Deterministic Fault Injection:** An in-memory chaos engineering engine supporting 13 transport, network, and persistence fault types to rigorously validate machine-checkable invariants (I1–I12).
+- **Production Observability:** Micrometer metrics, bounded-cardinality tags, custom Actuator health indicators (`UP`, `DEGRADED`, `DOWN`), structured MDC logging with `X-Request-ID`, and pre-configured Prometheus/Grafana dashboards.
+
+---
+
+## 3. Architecture
+
+```mermaid
+graph TD
+    subgraph "Tier 1: Offline Mobile Domain (Untrusted Replication)"
+        DeviceA["Payer Device A<br/>(:core-crypto, :core-database)"]
+        DeviceB["Relay Peer B<br/>(:core-transport, :core-mesh)"]
+        DeviceC["Bridge Gateway C<br/>(:core-bridge, WorkManager)"]
+        
+        DeviceA -->|"BLE GATT Frames (Magic 0x5550)<br/>MTU Negotiation & CRC-16"| DeviceB
+        DeviceB -->|"Epidemic Gossip &<br/>Anti-Entropy (16 Prefix Buckets)"| DeviceC
+    end
+
+    subgraph "Tier 2: Authoritative Backend (Sole Financial Authority)"
+        BridgeAPI["Spring Boot Ingestion Engine<br/>POST /api/bridge/ingest"]
+        CryptoService["Crypto & Identity Verification<br/>RSA-OAEP, AES-GCM, Ed25519"]
+        SettlementService["Settlement & Sequence State Machine<br/>Fork Detection & Escrow Accounting"]
+        
+        DeviceC -->|"HTTPS POST (Encrypted MeshPacket)<br/>X-Bridge-Node-Id, X-Request-ID"| BridgeAPI
+        BridgeAPI --> CryptoService
+        CryptoService --> SettlementService
+    end
+
+    subgraph "Persistence & Coordination"
+        RedisStore[("Redis 7<br/>Non-Authoritative Gate<br/>upi:lock:packetHash (TTL 60s)<br/>Dashboard Read Cache")]
+        PostgresDB[("PostgreSQL 16<br/>AUTHORITATIVE FINANCIAL STATE<br/>UNIQUE(packet_hash)<br/>ACID Transactions & Optimistic Locks")]
+        
+        BridgeAPI <-->|"SETNX In-Flight Gate<br/>(Failover to In-Memory)"| RedisStore
+        SettlementService <-->|"Authoritative Ledger Commit<br/>Escrow Debits & Credit Updates"| PostgresDB
+    end
+
+    subgraph "Tier 3: Observability & Control"
+        Dashboard["React 18 Dashboard<br/>(Vite + TypeScript + Tailwind)"]
+        Prometheus["Prometheus & Grafana<br/>(Actuator Metrics Scrape)"]
+        
+        Dashboard <-->|"Adaptive Polling (2s/10s)<br/>Stale Safety Banner (>5s)"| BridgeAPI
+        BridgeAPI -.->|"Metrics & Health<br/>/actuator/prometheus"| Prometheus
+    end
+```
+
+---
+
+## 4. End-to-End Payment Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Payer as Payer Device (:app)
+    participant Peer as Mesh Relay Peer
+    participant Bridge as Bridge Gateway (:core-bridge)
+    participant Backend as Spring Boot Backend
+    participant DB as PostgreSQL 16 (Authoritative)
+
+    Note over Payer: 1. Offline Payment Creation
+    Payer->>Payer: Check escrow allowance & advance sequenceCounter (+1)
+    Payer->>Payer: Sign canonical v3_tx with Ed25519 private key
+    Payer->>Payer: Hybrid-encrypt payload (RSA-2048-OAEP + AES-256-GCM)
+    Payer->>Payer: Compute packetHash = SHA-256(ciphertext)
+    Payer->>Payer: Persist OutboundPayment (READY_FOR_TRANSPORT) in Room
+
+    Note over Payer,Peer: 2. BLE Transport & Mesh Propagation
+    Payer->>Peer: Transmit 16-byte UPI frames over BLE GATT
+    Peer->>Peer: Reassemble fragments in Room & verify CRC-16 + packetHash
+    Peer->>Bridge: Epidemic push / Anti-entropy sync (16 prefix buckets)
+
+    Note over Bridge,Backend: 3. WAN Ingestion & Authoritative Settlement
+    Bridge->>Bridge: Detect internet (NET_CAPABILITY_VALIDATED)
+    Bridge->>Backend: HTTPS POST /api/bridge/ingest (MeshPacket)
+    Note over Backend: HTTP 200 != Financial Settlement
+    Backend->>Backend: Check in-flight lock (Redis SETNX / In-Memory)
+    Backend->>DB: Check recovery fast-path (findByPacketHash)
+    Backend->>Backend: Decrypt RSA-OAEP + AES-GCM (verify auth tag)
+    Backend->>Backend: Validate freshness (signedAt within 24h)
+    Backend->>Backend: Verify sender Ed25519 signature & certificate
+    Backend->>Backend: Sequence check: in-order vs gap vs counter collision
+    Backend->>DB: ATOMIC COMMIT: Debit escrow, credit receiver, insert transaction
+    DB-->>Backend: Commit confirmed (UNIQUE constraint enforced)
+    Backend->>Backend: Sign SettlementReceipt (Ed25519 issuer key)
+    Backend-->>Bridge: Return HTTP 200 + SettlementReceipt
+
+    Note over Bridge,Payer: 4. Receipt Propagation & Local Confirmation
+    Bridge->>Payer: Forward SettlementReceipt via mesh
+    Payer->>Payer: Verify backend Ed25519 signature on v3_receipt
+    Payer->>Payer: Update settledAmountPaisa in local Room database
+```
+
+---
+
+## 5. Cryptographic Security
+
+The cryptographic architecture guarantees payload confidentiality, tamper evidence, sender authorization, and replay protection across untrusted intermediary hops:
+
+| Purpose | Mechanism | Implementation Details |
+|---|---|---|
+| **Payload Confidentiality** | Hybrid Encryption | RSA-2048-OAEP (SHA-256, MGF1-SHA-256) unwraps an ephemeral 256-bit AES key. |
+| **Payload Integrity** | Authenticated Encryption | AES-256-GCM with a unique 12-byte IV and 128-bit authentication tag. Any bit modification causes decryption failure. |
+| **Sender Authorization** | Digital Signatures | Ed25519 (RFC 8032). 64-byte signature over canonical transaction bytes; verified against sender's registered public key. |
+| **Content Identity** | SHA-256 Hash | `packetHash = SHA-256(ciphertext)`. Immutable identifier used for mesh sync, deduplication, and database uniqueness. |
+| **Replay Protection** | Nonce + Timestamp Window | 128-bit random UUID nonce combined with a strict 24-hour timestamp validity window (`signedAt`). |
+| **Key Storage at Rest** | Android Keystore | Device Ed25519 private keys are encrypted at rest using AES-256-GCM under a non-exportable master key (`upi_mesh_master_key`). |
+| **Issuer Authority** | Server Issuer Key | Backend maintains an Ed25519 issuer keypair to sign offline certificates and settlement receipts. |
+
+### Canonical Serialization Formats
+All signatures are computed over deterministic UTF-8 pipe-delimited strings:
+- **Transaction (`v3_tx`):** `v3_tx|walletId=...|counter=...|amountPaisa=...|senderVpa=...|receiverVpa=...|nonce=...|signedAt=...`
+- **Certificate (`v1_cert`):** `v1_cert|walletId=...|ownerVpa=...|ownerPublicKey=...|allocatedAmount=...|walletEpoch=...|validFrom=...|validUntil=...|initialCounter=...`
+- **Receipt (`v3_receipt`):** `v3_receipt|txId=...|packetHash=...|walletId=...|counter=...|status=...|settledAt=...`
+
+---
+
+## 6. Offline Wallet & Escrow Accounting
+
+### The Escrow Accounting Equation
+To guarantee that money cannot be created out of thin air while offline, the system enforces a strict balance conservation invariant:
+$$\text{Total Account Funds} = \text{Liquid Available Balance} + \text{Offline Locked Escrow Balance}$$
+
+1. **Allocation:** When ₹X is allocated to an offline wallet, ₹X is debited from the liquid balance and credited to `offlineLockedBalance`. The server issues an `OfflineWalletCertificate` signed with its Ed25519 issuer key.
+2. **Offline Spending:** The payer device increments its monotonic `sequenceCounter` and decrements its local spendable allowance.
+3. **Settlement:** Upon ingestion, the backend debits ₹amount from `offlineLockedBalance` and credits the payee’s liquid balance. The payer’s liquid balance is never debited twice.
+4. **Reconciliation:** Unused escrow ($\text{allocatedAmount} - \text{settledAmount}$) is returned to the payer's liquid balance when the wallet is reconciled or expires.
+
+### Monotonic Sequence State Machine
+
+```
+               [ Incoming Transaction (Counter N) ]
+                                │
+        ┌───────────────────────┼────────────────────────┐
+        ▼                       ▼                        ▼
+  N == LastSettled + 1    N > LastSettled + 1      N <= LastSettled
+   (In-Order Delivery)      (Sequence Gap)        (Duplicate or Fork)
+        │                       │                        │
+  Debit escrow &          Stage as                 Same packetHash?
+  credit receiver.        PENDING_SEQUENCE_GAP     ├── YES: Return committed record
+  Advance LastSettled.    (30-min window).         └── NO:  DOUBLE-SPEND DETECTED!
+  Issue signed receipt.                                     Mark CONFLICTING.
+                                                            Freeze wallet to
+                                                            LOCKED_DISPUTED.
+```
+
+> **Terminal Transfer Policy:**  
+> Offline value transfers are strictly **Payer $\to$ Payee $\to$ Backend**. A payee cannot re-spend received offline funds offline without prior backend settlement.
+
+---
+
+## 7. BLE Transport Layer
+
+The `:core-transport` module provides a point-to-point BLE transport layer implementing custom binary framing, dynamic ATT MTU negotiation, and Room-backed reassembly.
+
+### Approved 128-Bit Service & Characteristic UUIDs
+- **Service UUID:** `e8a30001-7c2b-4e6a-a83d-3b9e8a9f24c0`
+- **Control Point:** `e8a30002-7c2b-4e6a-a83d-3b9e8a9f24c0` (Write / Notify)
+- **Packet Transfer:** `e8a30003-7c2b-4e6a-a83d-3b9e8a9f24c0` (Write Without Response / Notify)
+- **State Summary:** `e8a30004-7c2b-4e6a-a83d-3b9e8a9f24c0` (Read / Notify)
+
+### 16-Byte Fixed UPI Frame Header
+Every BLE transmission chunk is prefixed with an exact 16-byte binary header:
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|          Magic (0x5550)       |    Version    |  MessageType  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     Flags     | FragmentIndex | TotalFragments|  TransferId   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       TransferId (cont)       |      PacketHashPrefix (24b)   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| PacketHash (c)|     PayloadLength (16b)       |  CRC16-CCITT  |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Payload (0..N bytes)                    |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+- **ATT MTU Payload Calculation:** $\text{Effective Payload} = M - 3\text{ (ATT overhead)} - 16\text{ (UPI header)} = M - 19$ bytes.
+- **Fragmentation Bounds:** Negotiated MTU ranges from 64 to 517 bytes. Maximum 64 fragments per packet.
+- **Reassembly:** Chunks persist into Room `PacketFragmentDao` across application restarts. Complete reassembly validates CRC-16-CCITT and matches the reassembled payload's SHA-256 against `packetHash`.
+- **Hardware Failure Semantics:** The concrete `AndroidBlePlatformDriver` contains zero silent in-memory fallbacks. Permission denials, missing adapters, or GATT connection drops immediately raise explicit exceptions (`BleProtocolException`).
+
+---
+
+## 8. Mesh Gossip & Anti-Entropy Protocol
+
+The `:core-mesh` module coordinates peer-to-peer packet replication across reachable devices without requiring internet access.
+
+### Epidemic Push (Fast Hop Propagation)
+When a device creates or receives a new packet, it pushes the packet to all connected BLE neighbors with a decremented Time-To-Live (TTL). When `TTL == 0`, epidemic push halts.
+
+### Deterministic Anti-Entropy Pull (State Reconciliation)
+To heal partitions and recover packets whose push TTL expired, devices periodically execute pairwise anti-entropy:
+1. **State Digest:** Each node computes a deterministic digest by lexicographically sorting all held `packetHash`es and hashing the concatenation with SHA-256 (`SHA-256("EMPTY")` if empty).
+2. **16 Prefix Buckets:** Hashes are partitioned into 16 buckets based on their first hexadecimal character (`0`–`f`).
+3. **Summary Exchange:** Nodes exchange `StateSummaryMessage`. If digests match, synchronization terminates in $O(1)$ time.
+4. **Bucket Hash Exchange:** If digests differ, nodes exchange full hashes only for divergent buckets (`BucketHashExchangeMessage`).
+5. **Set Difference & Bounded Sync:** Nodes compute symmetric set differences (`missingFromPeer` / `missingFromSelf`) and stream missing packets in bounded batches of up to 50 items (`SyncRequestMessage` $\to$ `SyncResponseMessage` $\to$ `SyncAckMessage`).
+
+> **Distributed Systems Clarification:**  
+> The mesh protocol provides **eventual state convergence** between reachable peers. It does **not** provide distributed consensus, linearizability, or global transaction ordering.
+
+---
+
+## 9. WAN Bridge Ingestion Layer
+
+The `:core-bridge` module enables internet-connected Android devices to act as untrusted gateways:
+- **Connectivity Detection:** Uses Android `ConnectivityManager` to monitor network capabilities, requiring both `NET_CAPABILITY_INTERNET` and `NET_CAPABILITY_VALIDATED`.
+- **Queue & Leasing:** Replicated packets in Room are scheduled via `WanQueueManager` with concurrency leases to prevent duplicate simultaneous uploads.
+- **Background Uploads:** Uses Android `WorkManager` (`WanUploadWorker`) with exponential backoff and jitter for OS-managed background synchronization.
+- **Untrusted Forwarder Model:** The bridge cannot decrypt the payload or alter transaction data. HTTP 200 indicates backend delivery, **never** financial settlement.
+- **Receipt Validation:** Upon receiving a backend response, `BridgeReceiptValidator` cryptographically verifies the server's Ed25519 signature over canonical `v3_receipt` before any local settlement update occurs.
+
+---
+
+## 10. Backend Financial Authority
+
+The Spring Boot backend is the sole authority governing the financial ledger. When a packet arrives at `/api/bridge/ingest`, it executes through a strict processing pipeline:
+
+```
+[ Ingest Request ]
+       │
+       ▼
+ 1. SHA-256 Content Hash ─────────► Compute packetHash = SHA-256(ciphertext)
+       │
+       ▼
+ 2. In-Flight Gate ───────────────► Redis SETNX upi:lock:<hash> (60s TTL)
+       │                            (Rejects concurrent duplicate uploads immediately)
+       ▼
+ 3. Recovery Fast-Path ───────────► Check PostgreSQL findByPacketHash
+       │                            (If already committed, return existing record)
+       ▼
+ 4. Hybrid Decryption ────────────► RSA-2048-OAEP unwraps AES key; AES-256-GCM decrypts
+       │                            (Authentication tag failure = immediate rejection)
+       ▼
+ 5. Freshness Validation ─────────► Verify signedAt is within the last 24 hours
+       │
+       ▼
+ 6. Signature & Cert Check ───────► Verify sender Ed25519 signature on v3_tx &
+       │                            validate server-signed OfflineWalletCertificate
+       ▼
+ 7. Sequence State Machine ───────► In-order vs Sequence Gap vs Counter Collision
+       │
+       ▼
+ 8. Atomic Settlement ────────────► PostgreSQL ACID transaction (@Version optimistic lock):
+       │                            Debit sender escrow, credit receiver liquid balance,
+       │                            insert into transactions table (UNIQUE packet_hash)
+       ▼
+ 9. Authoritative Receipt ────────► Sign SettlementReceipt with server Ed25519 issuer key
+```
+
+---
+
+## 11. PostgreSQL + Redis
+
+The infrastructure enforces a strict separation between authoritative persistence and non-authoritative coordination:
+
+| Dimension | PostgreSQL 16 (Authoritative) | Redis 7 (Non-Authoritative) |
+|---|---|---|
+| **Role** | Master financial ledger & source of truth | In-flight coordination gate & read cache |
+| **Constraints** | Hard DB `UNIQUE(packet_hash)`, `CHECK (balance >= 0)` | Key expiry (TTL 60s in-flight, 24h completion) |
+| **Persistence** | Durable disk storage with Flyway migrations | Ephemeral in-memory data store with snapshotting |
+| **Failure Mode** | If down, the backend reports `DOWN` and halts writes | If down, backend logs warning, reports `DEGRADED`, and falls back to local in-memory gate |
+| **Financial Authority**| **Absolute.** Balances and transactions live here | **Zero.** Redis outage never causes duplicate settlement |
+
+---
+
+## 12. Fault Injection & Reliability Framework
+
+The backend includes a deterministic chaos engineering framework operating at transport, control, and exception boundaries. It never directly mutates balances or database entities.
+
+### 13 Supported Fault Categories
+1. **Network Layer:** `DROP` (packet loss), `DUPLICATE` (transmission duplication), `DELAY` (latency injection), `REORDER` (sequence inversion), `PARTITION` (link severance), `PEER_UNAVAILABLE` (node dropouts).
+2. **Bridge Layer:** `BRIDGE_UNAVAILABLE` (WAN upload failure), `STALE_RESPONSE` (dropped HTTP response after settlement), `DUPLICATE_REQUEST` (concurrent identical submissions).
+3. **Control & Payload Layer:** `MALFORMED_SYNC_MESSAGE` (corrupted sync envelopes), `CORRUPTED_PACKET_PAYLOAD` (tampered ciphertext bytes).
+4. **Persistence & Node Layer:** `TRANSIENT_DATABASE_FAILURE` (optimistic lock collisions triggering retry backoff), `CRASH_AND_RESTART` (volatile buffer reset followed by anti-entropy recovery).
+
+---
+
+## 13. Machine-Checkable Invariants
+
+The backend continuously audits 12 formal invariants across all operations:
+
+| ID | Invariant Name | Architectural Purpose |
+|---|---|---|
+| **I1** | **Packet Identity** | Guarantees `packetHash == SHA-256(ciphertext)` across all nodes. |
+| **I2** | **Transport Deduplication** | At most 1 entry per packet hash in any node buffer. |
+| **I3** | **Settlement Idempotency** | At most 1 committed settlement record per packet hash in PostgreSQL. |
+| **I4** | **Funds Conservation** | $\sum \text{liquidBalance} + \sum \text{offlineLockedBalance} \equiv \text{InitialTotalFunds}$. |
+| **I5** | **Non-Negative Escrow** | Wallet remaining escrow balance is strictly $\ge 0$. |
+| **I6** | **Observable Conflict** | Counter collisions are recorded as `CONFLICTING` and freeze wallets into `LOCKED_DISPUTED`. |
+| **I7** | **Connected Convergence** | Reachable connected nodes achieve identical `stateDigest` after anti-entropy. |
+| **I8** | **TTL Independence** | Anti-entropy synchronizes packets even after push TTL has expired. |
+| **I9** | **Transient Recoverability**| Transient DB errors release in-flight locks to allow valid retries. |
+| **I10**| **Permanent Terminality** | Validation failures terminate cleanly without infinite retry loops. |
+| **I11**| **Crash Non-Mutation** | Node crash/restart does not alter the backend financial ledger. |
+| **I12**| **Cryptographic Barrier** | Corrupted or unauthenticated packets are unconditionally rejected before ledger access. |
+
+---
+
+## 14. Observability
+
+- **Metrics & Actuator:** Micrometer metrics exposed at `/actuator/prometheus`. Bounded tag cardinality ensures high-cardinality values (such as `packetHash` or `vpa`) are never used as metric tags.
+- **Health Model:** `/actuator/health` exposes a custom health indicator:
+  - `UP` (HTTP 200): PostgreSQL and Redis are healthy.
+  - `DEGRADED` (HTTP 200): PostgreSQL is healthy, Redis is unavailable (operating in fallback mode).
+  - `DOWN` (HTTP 503): PostgreSQL is unreachable; financial mutations are safely blocked.
+- **Structured Tracing:** `CorrelationIdFilter` assigns or propagates an `X-Request-ID` header, injected into SLF4J MDC `[req:<id>]` and echoed in response headers.
+- **Pre-Configured Grafana Dashboards:**
+  1. `01 - System Overview`: High-level throughput, active faults, node counts, and invariant violations.
+  2. `02 - Transactions & Settlement`: Settled, duplicate, and rejection rates with P50/P95/P99 latencies.
+  3. `03 - Wallets & Escrow`: Escrow lifecycle, active allocations, reconciliations, and dispute states.
+  4. `04 - Mesh & Gossip Convergence`: Packet reception, hop distribution, partitions, and sync results.
+  5. `05 - Reliability & Fault Injection`: Active fault rules, recovery rates, and invariant audits.
+  6. `06 - Infrastructure & Cache`: Connection pools, Redis operations, fallback counts, and cache hit ratios.
+
+---
+
+## 15. React Dashboard
+
+The frontend is a dedicated visualization and simulation control layer built with React 18, TypeScript, Vite, and Tailwind CSS.
+
+- **Adaptive Polling:** Automatically polls backend APIs every 2,000 ms when the browser tab is active and backs off to 10,000 ms when hidden.
+- **Stale Data Safety:** If polling fails for $>5,000$ ms, a prominent `STALE DATA` banner is displayed and all mutation controls (inject, partition, heal, reset) are disabled.
+- **Dashboard Pages:**
+  - **Overview (`/`):** System KPIs, active faults, convergence summary, and invariant status badges.
+  - **Mesh Topology (`/mesh`):** Interactive SVG topology canvas showing device nodes, connection links (active, severed, syncing), and on-demand node inspection drawers.
+  - **Wallets (`/wallets`):** Authoritative offline wallet escrow allowances, liquid balances, and allocation modals.
+  - **Transactions (`/transactions`):** Server-paginated transaction explorer with search and cryptographic receipt verification modal.
+  - **Reliability (`/reliability`):** Real-time metric gauges and authoritative server evaluations of Invariants I1–I12.
+  - **Fault Injection (`/faults`):** Chaos engineering workspace with preset failure buttons, custom rule creator, and active rule deletion.
+
+---
+
+## 16. API Overview
+
+The backend exposes a structured REST API under `/api`. Complete implementations reside in `ApiController.java` and `DashboardApiController.java`.
+
+### Representative Endpoints
+- **Payment & Ingestion:**
+  - `POST /api/bridge/ingest`: Accepts `MeshPacket` over HTTPS, executes deduplication and settlement, returns signed receipt.
+  - `GET /api/server-key`: Returns backend RSA public key (base64).
+  - `POST /api/demo/send`: Simulates phone-side packet creation and injection.
+- **Wallet Lifecycle:**
+  - `POST /api/wallet/allocate`: Allocates escrow allowance and returns signed `OfflineWalletCertificate`.
+  - `POST /api/wallet/reconcile`: Reconciles/closes offline wallet and refunds remaining escrow.
+- **Mesh & Topology Simulation:**
+  - `GET /api/mesh/state`: Current virtual device states, digests, and severed links.
+  - `POST /api/mesh/gossip`: Executes one round of epidemic push gossip.
+  - `POST /api/mesh/sync`: Triggers pairwise anti-entropy synchronization.
+  - `POST /api/mesh/partition` / `POST /api/mesh/heal`: Severs or restores mesh links.
+- **Dashboard & Reliability:**
+  - `GET /api/dashboard/overview`: High-level aggregate KPIs.
+  - `GET /api/dashboard/reliability`: Real-time gauges and Invariants I1–I12 evaluations.
+  - `POST /api/faults/rule` / `DELETE /api/faults/rule/{id}`: Registers or removes fault injection rules.
+- **Observability:**
+  - `GET /actuator/health`: Service health (`UP`, `DEGRADED`, `DOWN`).
+  - `GET /actuator/prometheus`: Prometheus metrics scrape endpoint.
+
+---
+
+## 17. Technology Stack
+
+| Layer | Technologies |
+|---|---|
+| **Backend** | Java 17, Spring Boot 3.3.5, Spring Data JPA, Hibernate 6, Flyway 10.x, Bouncy Castle |
+| **Android** | Kotlin 1.9.20, Android SDK 34, AndroidX Room 2.6.1, WorkManager 2.9.0, Coroutines 1.8.0 |
+| **Transport** | BLE GATT, custom 16-byte binary framing, CRC-16-CCITT |
+| **Persistence & Cache** | PostgreSQL 16 (Authoritative), Redis 7 (Non-authoritative coordination), H2 (In-memory tests) |
+| **Frontend** | React 18, TypeScript, Vite 5, Tailwind CSS, Lucide React, Vitest 2.1.9 |
+| **Observability** | Spring Boot Actuator, Micrometer, Prometheus 2.51, Grafana 10.4 |
+| **Infrastructure** | Docker Compose |
+
+---
+
+## 18. Project Structure
+
+```
+offline-distributed-payment-system/
+├── pom.xml                                   # Spring Boot backend Maven configuration
+├── mvnw, mvnw.cmd                            # Maven wrapper
+├── docker-compose.yml                        # PostgreSQL, Redis, Prometheus, Grafana
+├── PLAN.md                                   # Multi-phase engineering master plan
+├── README.md                                 # This documentation
+│
+├── src/main/java/com/demo/upimesh/           # Spring Boot backend source code
+│   ├── config/                               # Redis, JPA, and CorrelationIdFilter configs
+│   ├── controller/                           # REST API controllers (ApiController, DashboardApiController)
+│   ├── crypto/                               # KeyHolder, HybridCryptoService, SignatureService
+│   ├── fault/                                # FaultInjector, FaultRule, FaultType, ReliabilityMetrics
+│   ├── metrics/                              # ObservabilityMetrics, InvariantAuditService, HealthIndicators
+│   ├── model/                                # Account, OfflineWallet, Transaction, MeshPacket entities
+│   └── service/                              # BridgeIngestionService, SettlementService, OfflineWalletService
+│
+├── android/                                  # Android multi-module application
+│   ├── app/                                  # Android APK module, HardwareHarnessActivity, platform driver
+│   ├── core-crypto/                          # Kotlin cryptographic library & golden test vectors
+│   ├── core-database/                        # Room persistence, Keystore manager, offline wallet engine
+│   ├── core-transport/                       # BLE GATT framing, MTU negotiation, fragmentation/reassembly
+│   ├── core-mesh/                            # Mesh gossip forwarder, state digests, anti-entropy sync
+│   └── core-bridge/                          # WAN connectivity provider, WorkManager upload worker
+│
+├── frontend/                                 # React + TypeScript + Vite dashboard
+│   ├── src/components/                       # UI components (TopologyCanvas, Tables, Modals)
+│   ├── src/pages/                            # Overview, Mesh, Wallets, Transactions, Reliability, Faults
+│   └── src/hooks/usePolling.ts               # Adaptive polling hook with tab visibility backoff
+│
+└── monitoring/                               # Production monitoring configurations
+    ├── prometheus/                           # Prometheus scraper config & alert rules
+    └── grafana/                              # Provisioned datasources & 6 dashboards
+```
+
+---
+
+## 19. Getting Started
 
 ### Prerequisites
+- **JDK 17** installed and configured (`java -version`).
+- **Node.js v18+** and npm for the frontend.
+- **Docker Compose** (optional, for local PostgreSQL, Redis, Prometheus, and Grafana).
+- **Android SDK 34** (optional, for building the Android APK).
 
-- **JDK 17 or newer** installed and on PATH (or `JAVA_HOME` set). Check with `java -version`.
-- That's it. No database, no Redis, no Maven (the wrapper handles it). Just Java.
-
-### Run on Windows
-
-Open a terminal in the project folder and run:
-
-```cmd
-mvnw.cmd spring-boot:run
-```
-
-The first run downloads Maven (~10 MB) and all dependencies (~80 MB) — give it a couple of minutes. Subsequent runs start in a few seconds.
-
-### Run on Mac/Linux
-
+### 1. Run Backend (In-Memory Development Mode)
 ```bash
-./mvnw spring-boot:run
+# Starts backend on http://localhost:8080 with in-memory H2 database
+.\mvnw.cmd spring-boot:run        # Windows
+./mvnw spring-boot:run            # Linux / macOS
 ```
 
-### Open the dashboard
+### 2. Run Full Infrastructure via Docker Compose
+```bash
+# Start PostgreSQL 16, Redis 7, Prometheus, and Grafana
+docker compose up -d
 
-Once you see `Started UpiMeshApplication in X.XXX seconds`, open:
-
-**http://localhost:8080**
-
-You'll get a dark dashboard with everything you need to drive the demo.
-
-### Stop the server
-
-`Ctrl+C` in the terminal.
-
-### Run the tests
-
-```cmd
-mvnw.cmd test
+# Run backend with PostgreSQL profile
+.\mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=postgres
 ```
 
-The interesting one is `IdempotencyConcurrencyTest` — it fires three threads delivering the same packet simultaneously and asserts that exactly one settles.
-
----
-
-## The demo flow (step by step)
-
-The dashboard has four buttons that walk through the full pipeline. The intended sequence:
-
-### Step 1 — Compose a payment
-
-Choose sender, receiver, amount, PIN. Click **"📤 Inject into Mesh"**.
-
-**What actually happens on the backend:**
-- The server pretends to be the sender's phone.
-- It builds a `PaymentInstruction` with a unique nonce and current timestamp.
-- It encrypts that with the server's RSA public key (using hybrid encryption — see below).
-- It wraps the ciphertext in a `MeshPacket` with a TTL of 5.
-- It hands the packet to `phone-alice`, an offline virtual device.
-
-You'll see `phone-alice` now holds 1 packet.
-
-### Step 2 — Run gossip rounds
-
-Click **"🔄 Run Gossip Round"**. Then click it again.
-
-Each round, every device that holds a packet broadcasts it to every other device within "Bluetooth range" (which, in our simulator, means everyone). TTL decrements per hop.
-
-After 1 round: every device holds the packet. After 2 rounds: still every device — TTL is just lower.
-
-In the real system this would happen organically as people walk past each other in the basement.
-
-### Step 3 — Bridge node walks outside
-
-Click **"📡 Bridges Upload to Backend"**.
-
-`phone-bridge` is the only device with `hasInternet=true`. The dashboard simulates that phone walking outside and getting 4G. It POSTs every packet it holds to `/api/bridge/ingest`.
-
-The backend pipeline runs:
-1. Hash the ciphertext (`SHA-256`).
-2. Try to claim the hash in the idempotency cache.
-3. If claimed: decrypt with the server's RSA private key.
-4. Verify freshness (signedAt within 24 hours).
-5. Run the debit/credit in a single DB transaction.
-
-Watch the **Account Balances** table — money has moved. Watch the **Transaction Ledger** — a new row appears.
-
-### Step 4 — Demonstrate idempotency (the killer feature)
-
-Reset the mesh. Inject a single packet. Run gossip 2 times. Now **all 5 devices hold the same packet, including multiple bridges in a more complex setup**.
-
-To really see idempotency in action, modify `MeshSimulatorService.java` to seed multiple bridge devices, or just:
-
-1. Click "Inject" once.
-2. Click "Gossip" twice.
-3. Click "Flush Bridges" — only `phone-bridge` is a bridge in the default seed, so just one upload happens.
-
-To exercise the *concurrent duplicate* case properly, run the test:
-```cmd
-mvnw.cmd test -Dtest=IdempotencyConcurrencyTest#singlePacketDeliveredByThreeBridgesSettlesExactlyOnce
+### 3. Run React Dashboard
+```bash
+cd frontend
+npm install
+npm run dev
+# Dashboard opens on http://localhost:5173 (proxies /api to http://localhost:8080)
 ```
 
-This test creates one packet, fires 3 threads at `BridgeIngestionService.ingest()` simultaneously, and verifies that exactly one settles, two are dropped as duplicates, and the sender is debited exactly once.
-
----
-
-## Architecture
-
+### 4. Build Android APK
+```bash
+cd android
+$env:JAVA_HOME="C:\Program Files\Java\jdk-17"    # Set Java 17 for PowerShell
+.\gradlew.bat :app:assembleDebug --no-daemon
+# Output APK: android/app/build/outputs/apk/debug/app-debug.apk
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         SENDER PHONE (offline)                          │
-│  PaymentInstruction { sender, receiver, amount, pinHash, nonce, time }  │
-│              │                                                          │
-│              ▼ encrypt with server's RSA public key                     │
-│   MeshPacket { packetId, ttl, createdAt, ciphertext }                   │
-└──────────────────────────────────────┬──────────────────────────────────┘
-                                       │ Bluetooth gossip
-                                       ▼
-        ┌─────────┐  hop   ┌─────────┐  hop   ┌─────────┐
-        │stranger1│ ─────▶ │stranger2│ ─────▶ │ bridge  │ ◀── walks outside
-        └─────────┘        └─────────┘        └────┬────┘     gets 4G
-                                                   │
-                                                   ▼ HTTPS POST
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     SPRING BOOT BACKEND (this project)                  │
-│                                                                         │
-│  /api/bridge/ingest                                                     │
-│       │                                                                 │
-│       ▼                                                                 │
-│  [1] hash ciphertext (SHA-256)                                          │
-│       │                                                                 │
-│       ▼                                                                 │
-│  [2] IdempotencyService.claim(hash)  ◀── atomic putIfAbsent (≈ Redis    │
-│       │                                  SETNX). Duplicates rejected    │
-│       │                                  here, before any work.         │
-│       ▼                                                                 │
-│  [3] HybridCryptoService.decrypt(ciphertext)                            │
-│       │       (RSA-OAEP unwraps AES key, AES-GCM decrypts payload       │
-│       │        AND verifies the auth tag — tampering = exception)       │
-│       ▼                                                                 │
-│  [4] Freshness check: signedAt within last 24h                          │
-│       │                                                                 │
-│       ▼                                                                 │
-│  [5] SettlementService.settle()                                         │
-│       @Transactional: debit sender, credit receiver, write ledger       │
-│       @Version on Account = optimistic locking (defense in depth)       │
-└─────────────────────────────────────────────────────────────────────────┘
+
+### 5. Run Automated Test Suites
+```bash
+# Backend tests (137 tests)
+.\mvnw.cmd test
+
+# Android tests (222 tests)
+cd android && .\gradlew.bat test --no-daemon
+
+# Frontend tests (17 tests)
+cd frontend && npm.cmd test -- --run
 ```
 
 ---
 
-## The three hard problems and how they're solved
+## 20. Verified Test Results
 
-### Problem 1: Untrusted intermediates & sender authorization
+The repository includes an extensive automated test suite covering cryptographic interoperability, concurrency, persistence, and reliability:
 
-Two distinct cryptographic problems must be solved when payments route through untrusted intermediaries:
+| Test Layer | Test Runner | Modules / Classes | Tests Run | Failures | Errors | Status |
+|---|---|---|---|---|---|---|
+| **Backend Suite** | Maven / JUnit 5 | 18 test classes | **137** | 0 | 0 | **PASS** |
+| **Android Modules** | Gradle / JUnit 5 | 6 modules (`:app`, `:core-*`) | **222** | 0 | 0 | **PASS** |
+| **Frontend Suite** | Vitest / RTL | 6 test suites | **17** | 0 | 0 | **PASS** |
+| **Total Automated Tests** | | | **376** | **0** | **0** | **100% PASS** |
 
-1. **Confidentiality & In-Flight Integrity (Transport Envelope)**: Intermediaries must not read or tamper with transaction details.
-   - **Solution**: **Hybrid Encryption (RSA-2048-OAEP + AES-256-GCM)**. The sender encrypts the payload using the server's public key. AES-GCM guarantees authenticated encryption; any bit flip causes decryption failure.
-2. **Sender Authorization (Cryptographic Identity)**: Encryption alone does *not* prove who created the payment. Since the server's RSA public key is public, anyone could craft a valid ciphertext claiming to be `alice@demo`.
-   - **Solution**: **Ed25519 Digital Signatures**. Before encryption, the sender signs a canonical representation of the transaction (`v1|sender=...|receiver=...|amount=...|nonce=...|signedAt=...`) with their Ed25519 private key. Upon decryption, the server resolves the sender's authoritative registered public key from the database and verifies the signature before any settlement occurs.
-
-```text
-Encryption (RSA-OAEP + AES-GCM) ──► Confidentiality & Payload Integrity
-Ed25519 Digital Signature       ──► Cryptographic Sender Authorization
-SHA-256 (Ciphertext Hash)       ──► Packet Identity & Deduplication Gate
-Freshness & Nonce               ──► Replay Attack Protection
-```
-
-> **Note on Private Key Storage**: In this prototype backend simulator, `DemoService` maintains an in-memory client private key store to simulate mobile phones creating payments. In a production mobile client, private keys must be generated inside hardware-backed storage (Android Keystore / StrongBox / Apple Secure Enclave) where keys are non-exportable and protected by biometric or PIN authentication.
-
-### Problem 2: The duplicate-storm & reliable settlement
-
-Three bridge nodes hold the same packet. They all walk outside at the same instant. They all POST to `/api/bridge/ingest` within milliseconds of each other. If you naively process all three, the sender is debited ₹1500 instead of ₹500. Furthermore, if a transient database locking collision occurs, a naive in-memory claim could permanently drop valid retries.
-
-**Reliability Guarantee:**
-The system provides **at-least-once delivery with effectively-once settlement semantics within the authoritative database**. It does NOT claim global exactly-once delivery across untrusted networks, but guarantees that every unique payment instruction has an effectively-once state transition on the financial ledger.
-
-**Solution: Multi-layered deduplication and transaction-safe retry.**
-
-1. **Authoritative Database Barrier (`UNIQUE(packet_hash)`)**:
-   The relational database `UNIQUE` constraint on `Transaction.packetHash` is the absolute source of truth. No in-memory cache replaces this authority.
-
-2. **In-Flight Concurrency Gate (`tryAcquire` / `release`)**:
-   `IdempotencyService` uses a thread-safe in-memory map to act as an in-flight concurrency gate:
-   - `tryAcquire(packetHash)`: Atomically admits the first thread to process the packet and immediately rejects concurrent duplicates.
-   - `release(packetHash)`: If transient processing errors occur before a database commit (e.g. database retry exhaustion, validation failures), the in-flight claim is cleanly released, preventing valid retries from being permanently dropped.
-   - `markCompleted(packetHash)`: When the transaction successfully commits to the database, the hash is retained in the fast-path cache.
-
-3. **Lost-Response Recovery (Recovery Fast-Path)**:
-   Before attempting to acquire an in-flight lock, `BridgeIngestionService` checks `TransactionRepository.findByPacketHash(hash)`. If a packet was already committed (e.g., if a client or bridge lost the HTTP response after settlement and retransmitted), the server immediately returns the original committed transaction result (`SETTLED` or `REJECTED`) without re-executing ledger updates or moving balances twice.
-
-4. **Bounded Optimistic-Lock Retry**:
-   Account entities use `@Version` fields for optimistic concurrency control. Under high concurrency on the same account (e.g. concurrent payments from Alice), `SettlementService` performs bounded retries (up to 3 attempts with exponential backoff and jitter: ~25ms, ~50ms). Crucially, **each retry executes in an independent, fresh database transaction** (`PROPAGATION_REQUIRES_NEW`) to guarantee transactional isolation.
-
-5. **Deterministic Failure Classification**:
-   - `INVALID` (e.g. `invalid_signature`, `stale_packet`, `unknown_sender`): Permanent rejection, claim released.
-   - `REJECTED` (e.g. `insufficient_balance`): Permanent business failure, recorded as a `REJECTED` transaction in the database, completed claim retained.
-   - `TRANSIENT_FAILURE` (e.g. `transient_settlement_failure`): Transient failure after retry exhaustion, in-flight claim released, bridge can retry later.
+- **Android APK Build:** Compiles successfully via `.\gradlew.bat :app:assembleDebug --no-daemon` producing `app-debug.apk` (14.17 MB).
 
 ---
 
-### Problem 3: Replay attacks
+## 21. Current Validation Status
 
-An attacker who captured a ciphertext weeks ago could replay it whenever convenient.
+### Verified in Software
+- 100% passing automated test suite (376 tests).
+- Cross-language cryptographic compatibility (Java $\leftrightarrow$ Kotlin) verified against golden test vectors.
+- Authoritative PostgreSQL schema migrations and `UNIQUE(packet_hash)` deduplication.
+- Redis non-authoritative fallback and restart durability across context destruction.
+- Android Room persistence, Keystore encryption, and crash recovery.
+- Concrete Android BLE platform driver failure semantics (zero simulated fallbacks in production code).
+- In-memory fault injection validating Invariants I1–I12 under network partitions and database collisions.
 
-**Solution: Two layers.**
+### Pending Physical Validation
+- Multi-device physical testing on real Android hardware (Phase 9.6).
+- Physical BLE radio performance, range, and packet loss under physical RF interference.
+- OS-level background execution and battery optimization constraints (Android Doze mode).
+- Real-world multi-hop mesh propagation between walking users.
 
-1. **Inside the encrypted payload**, the sender includes `signedAt` (epoch millis). The server rejects any packet older than 24 hours (or future-dated by >5 minutes). The attacker can't change `signedAt` without breaking the signature and GCM tag.
-2. **Inside the encrypted payload**, the sender includes a **nonce** (UUID). Even if Alice legitimately sends Bob ₹100 twice, the nonces differ → canonical strings differ → signatures differ → ciphertexts differ → hashes differ → both settle. But a *replay* of one specific signed packet is byte-identical, so the idempotency cache catches it.
-
-See `BridgeIngestionService.java` for the freshness check.
-
----
-
-### Problem 4: Offline Spending & Double-Spending Mitigation (Phase 3)
-
-In pure offline mesh environments without server connectivity, an untrusted device could sign multiple conflicting spends exceeding its balance. Phase 3 implements an escrowed offline wallet architecture with bounded exposure, monotonic sequence progression, and server-side fork detection.
-
-#### Non-Negotiable Security Model
-- **No absolute prevention claim**: Software-only devices cannot provide absolute physical anti-cloning guarantees. We explicitly do NOT claim: *"Offline double spending is completely prevented."*
-- **The actual guarantees**:
-  1. **Identical replay** is prevented by Phase 2 authoritative packet hashing and database uniqueness.
-  2. **Offline authorized exposure** is strictly bounded by the server-signed escrow allocation (`OfflineWalletCertificate`).
-  3. **Conflicting offline spends** are detected during reconciliation via monotonic counter analysis.
-  4. **Conflicting wallet histories** are immediately frozen in `LOCKED_DISPUTED` state with auditable dispute records.
-  5. **Rollback-resistant protection**: Production grade protection against malicious rollback/cloning requires hardware-backed keys and monotonic state (Android StrongBox / eSE).
-
-#### Escrow Accounting Model
-Invariant:
-$$\text{Account Total Funds} = \text{Liquid Available Balance} + \text{Offline Locked Balance}$$
-
-- **Allocation**: When allocating ₹X to an offline wallet, ₹X is debited from liquid balance and credited to `offlineLockedBalance`. An `OfflineWallet` entity is created, and a server-signed `OfflineWalletCertificate` is issued.
-- **Settlement**: When an offline transaction arrives, ₹amount is subtracted from sender's `offlineLockedBalance` and credited to recipient's liquid balance. The sender's liquid balance is **never debited twice**.
-- **Reconciliation/Expiry**: Unused escrow ($\text{allocatedAmount} - \text{settledAmount}$) is automatically returned to the sender's liquid balance upon wallet closure.
-
-#### Server-Signed Offline Wallet Certificate
-The server signs an `OfflineWalletCertificate` using its Ed25519 issuer private key covering canonical string `v1_cert|walletId=...|ownerVpa=...|ownerPublicKey=...|allocatedAmount=...|walletEpoch=...|validFrom=...|validUntil=...|initialCounter=...`.
-During reconciliation, the backend cryptographically verifies:
-1. Issuer signature
-2. Certificate validity window
-3. Registered public key binding
-4. Wallet ownership
-5. Wallet epoch
-6. Allocation limit
-
-#### Monotonic Sequence State Machine & Fork Detection
-Transactions carry an incrementing `sequenceCounter`. During settlement:
-- **`counter == lastSettledCounter + 1` (In-Order)**:
-  - Debit escrow, credit receiver, advance `lastSettledCounter = counter`.
-  - Issue signed `SettlementReceipt`.
-  - Cascade-process any pending transactions waiting for sequence gap resolution.
-- **`counter > lastSettledCounter + 1` (Sequence Gap)**:
-  - Staged in `PENDING_SEQUENCE_GAP` status.
-  - Held up to configurable gap window (default 30 min). If window expires, marked `REJECTED_UNRESOLVED_SEQUENCE_GAP` and wallet marked `AUDIT_REQUIRED`.
-  - If a conflicting transaction with a different hash appears for the same gap counter, flags `CONFLICTING` (`conflicting_fork_in_sequence_gap`) and freezes the wallet.
-- **`counter <= lastSettledCounter` (Duplicate / Fork Analysis)**:
-  - If `packetHash == settledTx.packetHash`: Phase 2 duplicate recovery returns committed record.
-  - If `packetHash != settledTx.packetHash`: **Conflicting counter fork detected!** Marked `CONFLICTING` with reason `double_spend_counter_collision`, wallet frozen to `LOCKED_DISPUTED`, pending sequence gaps cancelled, and dispute record linked to winning transaction.
-  - **Authoritative Winner Policy**: *"Among conflicting transactions that reach the authoritative backend, the first valid transaction to commit is the settlement winner."*
-
-#### Epoch Semantics & Terminal Transfer Policy
-- Wallets use strictly increasing epochs ($E_1, E_2, \dots$); at most one ACTIVE epoch exists per wallet. Obsolete epoch transactions are rejected with `obsolete_wallet_epoch`.
-- **Terminal Transfer Policy**: Transfers are strictly $\text{Payer} \to \text{Payee} \to \text{Backend}$. Payees cannot re-spend received offline funds offline.
-
-#### Signed Settlement Receipt
-Upon successful settlement, the backend generates a `SettlementReceipt` signed by the server's Ed25519 issuer key over canonical representation `v1_receipt|txId=...|hash=...|counter=...|status=...|settledAt=...`, providing cryptographic proof of settlement to the recipient.
+> **Physical Testing Notice:**  
+> **Physical-device Phase 9.6 validation has not been performed in this environment.**  
+> The project should not be interpreted as having passed real-device physical BLE validation.
 
 ---
 
-### Problem 5: Advanced Gossip & Distributed Synchronization (Phase 4)
+## 22. Limitations & Security Boundaries
 
-Pure broadcast gossip suffers from redundant message storms, permanent packet drops when TTL expires, and an inability to reconcile partitioned mesh networks upon reconnection. Phase 4 implements a hybrid synchronization protocol combining rapid epidemic push with deterministic anti-entropy pull.
-
-#### 1. Authoritative Content Identity vs Outer Transport Header
-- **`packetHash = SHA-256(ciphertext)`**: The cryptographic content identity used exclusively for deduplication, state digests, prefix bucket checksums, and sync requests.
-- **`packetId`**: An unauthenticated transport UUID used only for diagnostic logging and outer hop tracing.
-
-#### 2. Deterministic State Digest & 16-Bucket Prefix Slicing
-- **Empty State**: `stateDigest = SHA-256("EMPTY")`.
-- **Populated State**: Lexicographically sorted `packetHash`es are hashed together with SHA-256. Equal digests provide cryptographically strong practical equality with negligible collision probability ($\approx 2^{-256}$).
-- **16 Prefix Buckets**: Hashes are partitioned by their first hex character (`0`–`f`). When digests diverge, nodes compare bucket checksums to pinpoint exact divergent slices without transferring unaffected items.
-
-#### 3. Anti-Entropy Protocol Sequence
-When peers synchronize:
-```text
-STATE_SUMMARY (digest & bucket checksums)
-     ↓
-Compare root digest (O(1) summary exit on match)
-     ↓
-Compare 16 prefix bucket checksums
-     ↓
-BUCKET_HASH_EXCHANGE (authoritative full hashes for divergent buckets)
-     ↓
-Compute symmetric set differences (missingFromPeer / missingFromSelf)
-     ↓
-SYNC_REQUEST (batches of up to 50 packets)
-     ↓
-SYNC_RESPONSE (MeshPacket payloads)
-     ↓
-SYNC_ACK (certifies pairwise sync completion)
-```
-
-#### 4. Partition Resilience & Self-Healing
-- **Partition Isolation**: Links or submeshes can be severed via `/api/mesh/partition`. Partitioned submeshes operate independently and achieve local consistency.
-- **Bi-Directional Healing**: When links are restored via `/api/mesh/heal`, anti-entropy exchanges detect divergence and mutually stream missing transactions across the healed boundary.
-- **Alternate-Peer Selection**: If a target peer times out or fails, the node aborts the session, marks the peer `DEGRADED`, and falls back to an alternate reachable neighbor.
-- **TTL vs Anti-Entropy Independence**: TTL limits initial push broadcast radius. **TTL never blocks anti-entropy repair**; anti-entropy synchronizes packets even if their push TTL has expired.
-
-#### 5. Preservation of Phase 3 Double-Spending Rules
-Conflicting offline wallet transactions (e.g. same wallet ID and counter with differing nonces) are **never** discarded by mesh nodes. Both packets synchronize through the mesh to the bridge so the authoritative Phase 3 backend can detect the collision, flag `double_spend_counter_collision`, and freeze the wallet into `LOCKED_DISPUTED`.
-
-#### 6. Explicit Distributed Systems Non-Goals
-- **No Linearizability / Global Strong Consistency**: Convergence is eventual across connected components.
-- **No Global Transaction Ordering**: Transactions from different senders are concurrent; strict monotonic order is enforced per wallet.
-- **No Physical BLE / Hardware Guarantees**: This is an in-memory Java simulator; BLE MTU constraints and hardware secure enclaves are deferred to Phase 9.
+1. **Prototype Status:** This repository is an engineering and research prototype demonstrating distributed systems and cryptographic architectures. It is **not** a production banking switch and does not interface with NPCI or core banking switches.
+2. **Software vs. Hardware Anti-Cloning Boundary:** Private keys and monotonic sequence counters are managed via software Keystore emulation. Software-only implementations cannot prevent physical device cloning or virtual machine snapshot rollbacks. Production-grade rollback resistance requires hardware-backed secure enclaves (such as Android StrongBox Keymaster, eSE, or Apple Secure Enclave) combined with remote hardware attestation.
+3. **Detection vs. Absolute Prevention:** Double-spending cannot be physically prevented at an offline peer if a device is maliciously cloned; instead, **conflicts are detected with mathematical certainty during backend reconciliation**, freezing the wallet into `LOCKED_DISPUTED` and creating an auditable dispute record.
+4. **No Distributed Consensus:** The mesh gossip protocol provides eventual consistency across reachable nodes; it does not implement distributed consensus (e.g., Raft, Paxos, or blockchain).
+5. **Terminal Transfer Restriction:** Offline payments are strictly Payer $\to$ Payee $\to$ Backend. Payees cannot recursively re-spend offline funds offline.
 
 ---
 
-## File-by-file walkthrough
+## 23. Engineering Principles
 
-```
-upi-offline-mesh/
-├── pom.xml                                  Maven build, Spring Boot 3.3, Java 17
-├── mvnw, mvnw.cmd                           Maven wrapper (no install needed)
-├── README.md                                this file
-└── src/main/
-    ├── resources/
-    │   ├── application.properties           H2 in-memory DB, port 8080, TTLs
-    │   └── templates/dashboard.html         The interactive demo UI
-    └── java/com/demo/upimesh/
-        ├── UpiMeshApplication.java          Spring Boot main class
-        │
-        ├── model/                           ── Domain layer
-        │   ├── Account.java                 JPA entity. @Version = optimistic lock + offlineLockedBalance
-        │   ├── AccountRepository.java       Spring Data JPA
-        │   ├── OfflineWallet.java           JPA entity. Offline escrow allocation, epoch, counter, status
-        │   ├── OfflineWalletRepository.java Spring Data JPA (findByWalletId)
-        │   ├── OfflineWalletCertificate.java Server-signed offline spending capability certificate (record)
-        │   ├── SettlementReceipt.java       Server-signed cryptographic settlement receipt (record)
-        │   ├── Transaction.java             Settled-tx ledger. unique idx on packetHash, walletId, counter
-        │   ├── TransactionRepository.java   Spring Data JPA (findByPacketHash, findByWalletIdAndSequenceCounter)
-        │   ├── MeshPacket.java              Wire format. Outer fields readable, ciphertext opaque + getPacketHash()
-        │   ├── PaymentInstruction.java      Decrypted payload (sender/receiver/amount/nonce/time/walletId/counter/cert)
-        │   └── sync/                        ── Phase 4 Synchronization models
-        │       ├── MeshSyncMessage.java     Sealed interface for typed sync message hierarchy
-        │       ├── HelloMessage.java        Peer discovery and heartbeat record
-        │       ├── StateSummaryMessage.java State digest and 16 prefix bucket checksums record
-        │       ├── BucketHashExchangeMessage.java Full authoritative packet hashes for divergent bucket record
-        │       ├── SyncRequestMessage.java  Bounded batch pull request record
-        │       ├── SyncResponseMessage.java Payload delivery record
-        │       ├── SyncAckMessage.java      Pairwise synchronization completion acknowledgment record
-        │       ├── PacketSyncMeta.java      Stored packet synchronization metadata record
-        │       └── PeerSyncRecord.java      Neighbor synchronization tracking class
-        │
-        ├── crypto/                          ── Cryptography layer
-        │   ├── ServerKeyHolder.java         Generates RSA-2048 and Ed25519 issuer keypairs on startup
-        │   ├── HybridCryptoService.java     RSA-OAEP + AES-256-GCM encrypt/decrypt + ciphertext hash
-        │   └── SignatureService.java        Ed25519 signing, verification, cert/receipt signing, canonical serialization
-        │
-        ├── service/                         ── Business logic
-        │   ├── DemoService.java             Seeds accounts, simulates phone creation of online & offline packets
-        │   ├── VirtualDevice.java           Phone in mesh. packetHash store, state digest, 16 buckets, wallet state
-        │   ├── AntiEntropyService.java      Pairwise anti-entropy reconciliation engine with fallback
-        │   ├── MeshSimulatorService.java    Hybrid push-pull coordinator with partition/heal topology controls
-        │   ├── OfflineWalletService.java    Escrow allocation, certificate issuance, and wallet reconciliation
-        │   ├── IdempotencyService.java      In-flight concurrency gate (tryAcquire/release)
-        │   ├── SettlementService.java       Fresh-transaction optimistic-lock retry, offline sequence state machine & fork detection
-        │   ├── TransientSettlementException.java Dedicated exception on retry exhaustion
-        │   └── BridgeIngestionService.java  THE pipeline: DB lookup → tryAcquire → decrypt → freshness → verify sig → cert check → settle
-        │
-        ├── controller/                      ── HTTP layer
-        │   ├── ApiController.java           All REST endpoints (/api/mesh/sync, /api/mesh/partition, etc.)
-        │   └── DashboardController.java     Serves the dashboard HTML at /
-        │
-        └── config/
-            └── AppConfig.java               @EnableScheduling for cache eviction
-
-src/test/java/com/demo/upimesh/
-├── CryptographicIdentityTest.java           Sender identity & authorization verification integration tests
-├── IdempotencyConcurrencyTest.java          The 3-bridges-at-once test + tamper test
-├── ReliableIdempotencyTest.java             13 Phase 2 reliability, retry, lost-response, and concurrency tests
-├── OfflineWalletReliabilityTest.java        20 Phase 3 offline escrow, sequence gaps, fork detection & receipt tests
-├── AdvancedGossipSyncTest.java              15 Phase 4 anti-entropy, state digest, partition & convergence tests
-└── crypto/
-    └── SignatureServiceTest.java            Ed25519 unit tests & canonicalization determinism tests
-```
+- **PostgreSQL is the Sole Financial Authority:** Client devices, BLE transports, and Room databases are non-authoritative replication and execution caches.
+- **Cryptography Protects Authenticity and Privacy:** Intermediaries can neither read payment details nor forge sender authorization.
+- **Content Addressing as Identity:** `packetHash = SHA-256(ciphertext)` acts as the immutable identity across transports, caches, and databases.
+- **Durable Storage Constraints:** Relational database constraints (`UNIQUE(packet_hash)`) provide the definitive deduplication barrier.
+- **Redis is Non-Authoritative:** Redis failures or evictions never compromise financial correctness.
+- **Failures Must Surface Explicitly:** Production drivers must never simulate success when hardware or permissions fail.
+- **Settlement Requires Proof:** Local balances reflect settlement only after verifying an Ed25519-signed `SettlementReceipt` from the backend.
+- **Safety in Testing:** Fault injection operates strictly at transport and control boundaries, never directly mutating financial ledger state.
 
 ---
 
-## API reference
+## 24. License & Future Work
 
-| Method | Path | What it does |
-|---|---|---|
-| GET | `/` | Dashboard HTML |
-| GET | `/api/server-key` | Server's RSA public key (base64) |
-| GET | `/api/accounts` | All accounts and balances |
-| GET | `/api/transactions` | Last 20 transactions |
-| GET | `/api/mesh/state` | Current state of every virtual device, digests, and severed links |
-| POST | `/api/demo/send` | Simulate sender phone — encrypt + inject packet |
-| POST | `/api/mesh/gossip` | Run one round of epidemic push gossip across the mesh |
-| POST | `/api/mesh/sync` | **Phase 4:** Run pairwise anti-entropy synchronization across reachable peers |
-| POST | `/api/mesh/partition` | **Phase 4:** Sever specific links or create submesh partitions |
-| POST | `/api/mesh/heal` | **Phase 4:** Heal specific link or all partitioned mesh links |
-| POST | `/api/mesh/flush` | Bridges with internet upload to backend (parallel) |
-| POST | `/api/mesh/reset` | Clear mesh + idempotency cache |
-| POST | `/api/bridge/ingest` | **The production endpoint.** Real bridges POST here |
-| GET | `/h2-console` | Browse the in-memory database |
+### License
+This repository is an educational and research prototype. No license is currently attached.
 
-H2 console login: JDBC URL `jdbc:h2:mem:upimesh`, username `sa`, no password.
-
-### Request format for `/api/bridge/ingest`
-
-```http
-POST /api/bridge/ingest
-Content-Type: application/json
-X-Bridge-Node-Id: phone-bridge-42
-X-Hop-Count: 3
-
-{
-  "packetId": "550e8400-e29b-41d4-a716-446655440000",
-  "ttl": 2,
-  "createdAt": 1730000000000,
-  "ciphertext": "base64-encoded-RSA-and-AES-blob"
-}
-```
-
-Response:
-```json
-{
-  "outcome": "SETTLED",                     // or "DUPLICATE_DROPPED", "INVALID", "REJECTED", "TRANSIENT_FAILURE"
-  "packetHash": "a3f8c9...",
-  "reason": null,                            // populated on INVALID / REJECTED / TRANSIENT_FAILURE
-  "transactionId": 42                        // populated on SETTLED or REJECTED
-}
-```
-
----
-
-## Tests
-
-Run all tests:
-```
-mvnw.cmd test
-```
-
-Key test suites:
-
-- **`ReliableIdempotencyTest`** — 13 tests covering retry on transient failures, optimistic lock conflict recovery, 10-thread concurrent duplicate delivery, lost HTTP response recovery, balance conservation across concurrent payments, and database deduplication guarantees.
-- **`CryptographicIdentityTest`** — 10 tests covering Ed25519 signature verification, forged signatures, cross-account keys, algorithm validation, and freshness boundaries.
-- **`IdempotencyConcurrencyTest`** — 3 tests verifying parallel bridge uploads and ciphertext tamper resistance.
-- **`SignatureServiceTest`** — Deterministic canonical serialization and digital signature unit tests.
-
----
-
-## What's NOT real (and what would change for production)
-
-This is a teaching demo. To make it production-grade you'd swap these things:
-
-| What's in the demo | What it would be in production |
-|---|---|
-| H2 in-memory DB | PostgreSQL / MySQL with replicas |
-| `ConcurrentHashMap` for idempotency | Redis with `SET NX EX` |
-| RSA keypair regenerated on every startup | Private key in HSM (AWS KMS, HashiCorp Vault). Public key cached on devices. |
-| Server-side `DemoService.createPacket()` | Same code running on Android, in a Kotlin port |
-| Software-simulated mesh (`MeshSimulatorService`) | Real BLE GATT or Wi-Fi Direct between phones |
-| One settlement service that owns the ledger | Integration with NPCI / a real bank core |
-| No auth on `/api/bridge/ingest` | Mutual TLS or signed bridge-node certificates |
-| In-memory accounts seeded on startup | Real KYC'd users, real VPAs, real PIN verification against the bank |
-| In-memory simulated device monotonic counter | Hardware-backed monotonic counter (e.g. Android StrongBox / eSE) |
-| Software-signed wallet certificate | Hardware Attestation + CA-backed certificate chain |
-| H2 console exposed | Disabled |
-| No rate limiting | Per-bridge-node rate limit, per-sender velocity check |
-| Logs to console | Structured logs to a SIEM, alerts on `INVALID` spikes |
-
-The cryptography, idempotency, and offline escrow state machine code is essentially production-shaped. The hardware isolation and distributed infrastructure around it is what changes.
-
----
-
-## Honest limitations of the concept & Software vs Hardware Boundary
-
-Let's be completely transparent about the security boundary:
-
-1. **Software vs Hardware Boundary (Anti-Cloning)**:
-   - In this prototype, devices and sequence counters are simulated in software. A software-only implementation running on an untrusted device **cannot provide absolute physical anti-cloning guarantees**. If an attacker clones the application memory or performs a VM snapshot rollback, they could produce two validly signed transactions sharing the same sequence counter before syncing.
-   - **Production Requirement**: Real-world rollback resistance and anti-cloning require **hardware-backed non-exportable private keys and monotonic counters** provided by secure elements (such as Android StrongBox Keymaster, Embedded Secure Element (eSE), or Apple Secure Enclave) combined with remote hardware attestation.
-2. **Detection vs Prevention**:
-   - Monotonic sequence checks and escrow accounting strictly **bound the issuer's authorized exposure** to the pre-funded escrow amount.
-   - Conflicting offline spends cannot be prevented at the offline peer if the device is cloned; instead, **conflicts are detected with mathematical certainty during reconciliation**, freezing the wallet into `LOCKED_DISPUTED` and creating an auditable dispute record.
-3. **Bluetooth in real life is hard**:
-   - Background BLE on Android is heavily throttled since Android 8. iOS peripheral mode is locked down. Two strangers' phones reliably forming a GATT connection while the apps aren't actively open is genuinely difficult and energy intensive. This prototype simulates the mesh layer.
-4. **Terminal transfer restriction**:
-   - Offline funds cannot be recursively re-spent across arbitrary peer chains without global consensus or hardware-enforced token transfer. Transfers are strictly terminal: Payer $\to$ Payee $\to$ Backend.
-
-For a college / portfolio project: name the concept honestly as **"mesh-routed deferred settlement"** rather than "real-time offline UPI," and you'll have a much stronger pitch. The cryptography and idempotency work here is real engineering and worth showing off.
-
----
-
-## Troubleshooting
-
-**`java: command not found`** — Install JDK 17+. On Windows, `winget install EclipseAdoptium.Temurin.17.JDK` or download from adoptium.net.
-
-**Port 8080 already in use** — Change `server.port` in `application.properties`.
-
-**First `mvnw.cmd` run hangs for a long time** — It's downloading Maven (~10 MB) then dependencies (~80 MB). Give it 2–3 minutes on a normal connection. After that, startup is ~5 seconds.
-
-**`mvnw.cmd : The term 'mvnw.cmd' is not recognized`** — On PowerShell you need to prefix with `.\`: `.\mvnw.cmd spring-boot:run`.
-
-**Tests fail intermittently** — The concurrency test is timing-sensitive. If it ever flakes, run it 3x; if it consistently fails on your hardware, file the actual failure output.
-
----
-
-## License
-
-Demo code, no license. Use it however you want for learning.
+### Future Work
+- **Phase 9.6 Physical Device Validation:** Deploying the compiled debug APK across physical Android devices to measure real-world BLE GATT connection latency, advertising discovery reliability, and RF packet loss.
+- **Hardware Attestation Integration:** Binding offline wallet certificate issuance to hardware-backed Keystore/StrongBox attestation keys.
+- **Power & Doze Optimization:** Implementing adaptive BLE advertising and scanning intervals to conserve battery life during extended background operation.

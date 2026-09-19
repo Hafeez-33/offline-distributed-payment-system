@@ -82,6 +82,7 @@ public class OfflineWallet {
     public void setSettledAmount(BigDecimal settledAmount) { this.settledAmount = settledAmount; }
 
     public BigDecimal getRemainingAmount() { return remainingAmount; }
+    public BigDecimal getRemainingEscrow() { return remainingAmount; }
     public void setRemainingAmount(BigDecimal remainingAmount) { this.remainingAmount = remainingAmount; }
 
     public Long getWalletEpoch() { return walletEpoch; }

@@ -1,0 +1,76 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "id": null,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Gossip Rounds",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_mesh_gossip_rounds_total)", "legendFormat": "Gossip Rounds", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "purple", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "title": "Anti-Entropy Sync Rounds",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_mesh_sync_rounds_total)", "legendFormat": "Sync Rounds", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "blue", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "title": "Packets Forwarded",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_mesh_packets_forwarded_total)", "legendFormat": "Transfers", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "green", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "title": "Bridge Flushes",
+      "type": "stat",
+      "targets": [{ "expr": "sum(upi_mesh_bridge_flushes_total)", "legendFormat": "Flushes", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "fixedColor": "yellow", "mode": "fixed" } } }
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 5,
+      "title": "Pairwise Anti-Entropy Results (In-Sync vs Repaired)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(upi_mesh_sync_rounds_total{result=\"in_sync\"}[1m])", "legendFormat": "In-Sync Pairs/s", "refId": "A" },
+        { "expr": "rate(upi_mesh_sync_rounds_total{result=\"repaired\"}[1m])", "legendFormat": "Repaired Pairs/s", "refId": "B" },
+        { "expr": "rate(upi_mesh_sync_failures_total[1m])", "legendFormat": "Sync Failures/s", "refId": "C" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 6,
+      "title": "Mesh Topology Events & Convergence Checks",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(upi_mesh_convergence_checks_total{converged=\"true\"}[1m])", "legendFormat": "Converged Checks/s", "refId": "A" },
+        { "expr": "rate(upi_mesh_convergence_checks_total{converged=\"false\"}[1m])", "legendFormat": "Divergent Checks/s", "refId": "B" },
+        { "expr": "rate(upi_mesh_partition_events_total[1m])", "legendFormat": "Partitions/s", "refId": "C" },
+        { "expr": "rate(upi_mesh_heal_events_total[1m])", "legendFormat": "Heals/s", "refId": "D" }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["upi", "mesh", "gossip", "anti-entropy"],
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "04 - UPI Mesh & Convergence",
+  "uid": "upi-mesh",
+  "version": 1
+}

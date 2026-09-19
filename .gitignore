@@ -6,3 +6,15 @@ target/
 *.iml
 .vscode/
 .DS_Store
+
+# Gradle & Android build artifacts
+.gradle/
+build/
+**/build/
+android/.gradle/
+android/**/build/
+android/.idea/
+*.hprof
+
+# Local Android SDK configuration
+android/local.properties

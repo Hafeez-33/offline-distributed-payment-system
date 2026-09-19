@@ -46,6 +46,41 @@ public class SettlementService {
     @org.springframework.beans.factory.annotation.Value("${upi.mesh.sequence-gap-window-seconds:1800}")
     private long gapWindowSeconds;
 
+    @org.springframework.beans.factory.annotation.Value("${upi.mesh.settlement-backoff-ms:25}")
+    private long baseBackoffMs = 25L;
+
+    @Autowired(required = false)
+    private com.demo.upimesh.fault.FaultInterceptor faultInterceptor;
+
+    @Autowired(required = false)
+    private DashboardCacheService cacheService;
+
+    @Autowired(required = false)
+    private InfrastructureMetrics infrastructureMetrics;
+
+    @Autowired(required = false)
+    private com.demo.upimesh.metrics.UpiMetricsService metricsService;
+
+    public void setFaultInterceptor(com.demo.upimesh.fault.FaultInterceptor faultInterceptor) {
+        this.faultInterceptor = faultInterceptor;
+    }
+
+    public void setCacheService(DashboardCacheService cacheService) {
+        this.cacheService = cacheService;
+    }
+
+    public void setInfrastructureMetrics(InfrastructureMetrics infrastructureMetrics) {
+        this.infrastructureMetrics = infrastructureMetrics;
+    }
+
+    public void setMetricsService(com.demo.upimesh.metrics.UpiMetricsService metricsService) {
+        this.metricsService = metricsService;
+    }
+
+    public void setBaseBackoffMs(long baseBackoffMs) {
+        this.baseBackoffMs = baseBackoffMs;
+    }
+
     /**
      * Settle payment with bounded optimistic-lock retry.
      */
@@ -55,13 +90,26 @@ public class SettlementService {
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
-                return executeInNewTransaction(instruction, packetHash, bridgeNodeId, hopCount);
+                if (faultInterceptor != null) {
+                    faultInterceptor.inspectSettlementAttempt(packetHash, attempt);
+                }
+                Transaction result = executeInNewTransaction(instruction, packetHash, bridgeNodeId, hopCount);
+                if (cacheService != null) {
+                    cacheService.invalidateOverview();
+                }
+                return result;
             } catch (Exception e) {
                 if (!isRetryable(e)) {
                     if (e instanceof RuntimeException re) throw re;
                     throw new RuntimeException(e);
                 }
                 lastException = e;
+                if (infrastructureMetrics != null) {
+                    infrastructureMetrics.recordDbRetry();
+                }
+                if (metricsService != null) {
+                    metricsService.recordSettlementRetry();
+                }
                 log.warn("Optimistic lock / transient conflict on attempt {}/{} for packet {}: {}",
                         attempt, MAX_ATTEMPTS, packetHash.substring(0, Math.min(12, packetHash.length())), e.getMessage());
 
@@ -137,6 +185,10 @@ public class SettlementService {
         Transaction saved = transactions.save(tx);
         signAndSetReceipt(saved, 0L);
         saved = transactions.save(saved);
+
+        if (metricsService != null) {
+            metricsService.recordTransactionSettled(false, 0L);
+        }
 
         log.info("SETTLED ₹{} from {} to {} (packetHash={}, bridge={}, hops={})",
                 amount, sender.getVpa(), receiver.getVpa(),
@@ -332,6 +384,10 @@ public class SettlementService {
         signAndSetReceipt(saved, counter);
         saved = transactions.save(saved);
 
+        if (metricsService != null) {
+            metricsService.recordTransactionSettled(true, 0L);
+        }
+
         log.info("OFFLINE SETTLED: wallet={}, counter={}, amount=₹{}, remainingEscrow=₹{}",
                 wallet.getWalletId(), counter, amount, wallet.getRemainingAmount());
 
@@ -363,6 +419,9 @@ public class SettlementService {
                 pendingTx.setStatus(Transaction.Status.REJECTED);
                 pendingTx.setConflictReason("insufficient_offline_escrow");
                 transactions.save(pendingTx);
+                if (metricsService != null) {
+                    metricsService.recordPendingGapResolved();
+                }
                 break;
             }
 
@@ -384,6 +443,11 @@ public class SettlementService {
             pendingTx.setSettledAt(Instant.now());
             signAndSetReceipt(pendingTx, nextExpected);
             transactions.save(pendingTx);
+
+            if (metricsService != null) {
+                metricsService.recordTransactionSettled(true, 0L);
+                metricsService.recordPendingGapResolved();
+            }
 
             log.info("CASCADED GAP RESOLVED: wallet={}, counter={}, amount=₹{}, remaining=₹{}",
                     wallet.getWalletId(), nextExpected, pendingTx.getAmount(), wallet.getRemainingAmount());
@@ -473,9 +537,8 @@ public class SettlementService {
 
     private void applyBackoff(int attempt) {
         try {
-            // attempt 1 -> ~25ms + [0,10]ms jitter; attempt 2 -> ~50ms + [0,15]ms jitter
-            long baseMs = attempt * 25L;
-            long jitter = ThreadLocalRandom.current().nextLong(5L * attempt);
+            long baseMs = attempt * baseBackoffMs;
+            long jitter = baseBackoffMs > 5 ? ThreadLocalRandom.current().nextLong(5L * attempt) : 0;
             Thread.sleep(baseMs + jitter);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
